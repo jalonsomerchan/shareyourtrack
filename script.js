@@ -1,6 +1,6 @@
 let map, points = [], marker;
 let isPlaying = false, followCamera = true, is3D = false;
-let currentIndex = 0, _lastAnimTime = 0, animationId;
+let currentIndex = 0, _lastAnimTime = 0, animationId, playbackSpeed = 50;
 let rawGpx = "";
 
 // RADICAL CHANGE: Real-time Canvas Compositor Engine
@@ -158,117 +158,153 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     const color = document.getElementById('route-color').value;
 
     document.getElementById('modal-record').classList.add('hidden');
-    document.getElementById('loader').classList.remove('hidden');
-    document.getElementById('loader-text').innerText = "PREPARANDO VIDEO...";
-
     // 1. Config Mode
     const duration = parseInt(document.getElementById('input-duration').value) || 10;
     const showHeader = document.getElementById('check-header').checked;
     const showStats = document.getElementById('check-stats').checked;
     
-    // Calculate Speed to meet Duration (33fps * duration = total frames)
-    // Actually, MediaRecorder is real-time, so we adjust the play speed.
-    const container = document.getElementById('map-container');
-    const overlay = document.getElementById('video-overlay');
-    const originalWidth = container.style.width, originalHeight = container.style.height;
+    document.getElementById('modal-record').classList.add('hidden');
+    document.getElementById('loader').classList.remove('hidden');
+    document.getElementById('loader-text').innerText = "PREPARANDO VIDEO...";
 
-    // Aspect Ratios for UI preview
-    const uiW = (ratio === '916') ? 360 : (ratio === '11' ? 400 : 500);
-    const uiH = (ratio === '916') ? 640 : (ratio === '11' ? 400 : 281);
+    const resW = (ratio === '916') ? 720 : (ratio === '11' ? 720 : 1280);
+    const resH = (ratio === '916') ? 1280 : (ratio === '11' ? 720 : 720);
     
-    container.style.width = uiW + 'px';
-    container.style.height = uiH + 'px';
-    container.style.margin = 'auto';
-    container.classList.add('shadow-2xl', 'border-[12px]', 'border-white/10', 'rounded-[3rem]');
-    overlay.classList.add('hidden'); // Hide live overlay, we draw it manually in canvas
-    map.resize();
+    // 2. Setup Hidden Recording Map (PERFECT RESOLUTION)
+    const exportDiv = document.createElement('div');
+    exportDiv.style.width = resW + 'px';
+    exportDiv.style.height = resH + 'px';
+    exportDiv.style.position = 'fixed';
+    exportDiv.style.left = '-10000px';
+    exportDiv.style.top = '0';
+    document.body.appendChild(exportDiv);
 
-    // 2. Setup Recording Compositor (720p or 1080p base)
+    const recordingMap = new maplibregl.Map({
+        container: exportDiv,
+        style: map.getStyle(),
+        center: map.getCenter(),
+        zoom: map.getZoom(),
+        pitch: map.getPitch(),
+        interactive: false,
+        preserveDrawingBuffer: true,
+        antialias: true
+    });
+
+    await new Promise(res => recordingMap.once('load', res));
+    
+    // Setup Layers on the hidden map
+    if (!recordingMap.getSource('route')) {
+        recordingMap.addSource('route', { type: 'geojson', data: { type: 'Feature' } });
+    }
+    if (!recordingMap.getLayer('route-line')) {
+        recordingMap.addLayer({
+            id: 'route-line',
+            type: 'line',
+            source: 'route',
+            paint: { 'line-color': color, 'line-width': 8, 'line-opacity': 0.9 },
+            layout: { 'line-cap': 'round', 'line-join': 'round' }
+        });
+    }
+
+    // 3. Setup Recording Compositor
     const recordCanvas = document.createElement('canvas');
-    recordCanvas.width = (ratio === '916') ? 720 : (ratio === '11' ? 720 : 1280);
-    recordCanvas.height = (ratio === '916') ? 1280 : (ratio === '11' ? 720 : 720);
+    recordCanvas.width = resW;
+    recordCanvas.height = resH;
     const rctx = recordCanvas.getContext('2d');
     
     const stream = recordCanvas.captureStream(30);
     let recorder;
-    const mimeTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
-    ];
-    
+    let chunks = [];
+    const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
     let selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m));
     if (!selectedMime) return alert("Tu navegador no soporta grabación de video.");
     
-    recorder = new MediaRecorder(stream, { mimeType: selectedMime, videoBitsPerSecond: 10000000 });
-    const chunks = [];
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.start();
+    try {
+        recorder = new MediaRecorder(stream, { mimeType: selectedMime, videoBitsPerSecond: 15000000 });
+    } catch (e) { alert("Error: " + e.message); return; }
 
-    // 3. Dynamic speed adjustment
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    // 4. Dynamic speed adjustment
     const totalDistTime = (new Date(points[points.length-1].time) - new Date(points[0].time)) / 1000;
-    const targetSpeed = totalDistTime / duration;
+    playbackSpeed = totalDistTime / duration;
     const originalSpeedVal = document.getElementById('speed-val').value;
-    document.getElementById('speed-val').value = targetSpeed;
 
-    // 4. Frame Compositor Loop
+    // 5. Frame Compositor Loop
     let recording = true;
     const emoji = document.getElementById('route-icon').value || "🚴";
     const renderLoop = () => {
         if (!recording) return;
         
-        // Draw Map
-        const mapCanvas = map.getCanvas();
+        // MIRROR MAIN STATE TO RECORDING MAP
+        recordingMap.jumpTo({
+            center: map.getCenter(),
+            zoom: map.getZoom(),
+            pitch: map.getPitch()
+        });
+        
+        const trailJson = {
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: points.slice(0, currentIndex + 1).map(pt => [pt.lon, pt.lat])
+            }
+        };
+        recordingMap.getSource('route').setData(trailJson);
+
+        // COMPOUND TO FINAL CANVAS
+        const mapCanvas = recordingMap.getCanvas();
         rctx.fillStyle = '#020617';
         rctx.fillRect(0, 0, recordCanvas.width, recordCanvas.height);
         rctx.drawImage(mapCanvas, 0, 0, recordCanvas.width, recordCanvas.height);
         
-        // Draw Emoji at Projected Position
-        const pos = map.project([points[currentIndex].lon, points[currentIndex].lat]);
-        const scaleX = recordCanvas.width / mapCanvas.clientWidth;
-        const scaleY = recordCanvas.height / mapCanvas.clientHeight;
+        // Project Emoji using RecordingMap's coordinate system
+        const pos = recordingMap.project([points[currentIndex].lon, points[currentIndex].lat]);
         rctx.font = `${Math.floor(recordCanvas.width * 0.08)}px serif`;
         rctx.textAlign = 'center';
         rctx.textBaseline = 'middle';
-        rctx.fillText(emoji, pos.x * scaleX, pos.y * scaleY);
+        rctx.fillText(emoji, pos.x, pos.y);
 
-        // Draw Overlay (MANUAL)
         drawProOverlayLegacy(rctx, recordCanvas.width, recordCanvas.height, title, dateStr, color, currentIndex, showHeader, showStats);
-        
         requestAnimationFrame(renderLoop);
     };
     renderLoop();
 
-    // 5. Play Animation
+    // 6. Play Animation and Track Progress
     currentIndex = 0;
     isPlaying = true;
-    play(); 
+    
+    function cleanup() {
+        clearInterval(checkDone);
+        recording = false;
+        recordingMap.remove();
+        document.body.removeChild(exportDiv);
+        document.getElementById('speed-val').value = originalSpeedVal;
+        document.getElementById('loader').classList.add('hidden');
+    }
 
     const checkDone = setInterval(() => {
+        const percent = Math.round((currentIndex / (points.length - 1)) * 100);
+        document.getElementById('loader-text').innerText = `GRABANDO: ${percent}%`;
+        
         if (!isPlaying) {
             clearInterval(checkDone);
             recording = false;
-            recorder.stop();
+            setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 500);
         }
-    }, 200);
+    }, 100);
 
     recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
+        if (chunks.length === 0) { alert("Error: No se capturaron datos."); cleanup(); return; }
+        const blob = new Blob(chunks, { type: selectedMime });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `shareyourtrack_story_${Date.now()}.webm`;
+        a.download = `shareyourtrack_hd_${Date.now()}.webm`;
         a.click();
-
-        // Restore UI
-        container.style.width = originalWidth;
-        container.style.height = originalHeight;
-        container.style.margin = '0';
-        container.classList.remove('shadow-2xl', 'border-[12px]', 'border-white/10', 'rounded-[3rem]');
-        document.getElementById('speed-val').value = originalSpeedVal;
-        map.resize();
-        document.getElementById('loader').classList.add('hidden');
+        cleanup();
     };
+
+    try { recorder.start(); play(); } catch (e) { alert("Error: " + e.message); cleanup(); }
 });
 
 function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats) {
@@ -326,8 +362,7 @@ window.closeModal = closeModal;
 function animate(timestamp) {
     if (!isPlaying) return;
     if (!_lastAnimTime) _lastAnimTime = timestamp;
-    const speed = parseFloat(document.getElementById('speed-val').value);
-    const delta = (timestamp - _lastAnimTime) * speed;
+    const delta = (timestamp - _lastAnimTime) * playbackSpeed;
     _lastAnimTime = timestamp;
     let next = currentIndex;
     const target = new Date(points[currentIndex].time).getTime() + delta;
@@ -336,9 +371,18 @@ function animate(timestamp) {
     if (currentIndex >= points.length - 1) { pause(); }
     else animationId = requestAnimationFrame(animate);
 }
-function play() { isPlaying = true; _lastAnimTime = 0; document.getElementById('play-icon').className = 'fas fa-pause'; animationId = requestAnimationFrame(animate); }
+function play() { 
+    if (!isPlaying) {
+        playbackSpeed = parseFloat(document.getElementById('speed-val').value);
+    }
+    isPlaying = true; 
+    _lastAnimTime = 0; 
+    document.getElementById('play-icon').className = 'fas fa-pause'; 
+    animationId = requestAnimationFrame(animate); 
+}
 function pause() { isPlaying = false; document.getElementById('play-icon').className = 'fas fa-play'; cancelAnimationFrame(animationId); }
 document.getElementById('btn-play').addEventListener('click', () => isPlaying ? pause() : play());
+document.getElementById('speed-val').addEventListener('change', (e) => playbackSpeed = parseFloat(e.target.value));
 document.getElementById('timeline').addEventListener('input', (e) => { pause(); currentIndex = parseInt(e.target.value); updatePosition(currentIndex); });
 document.getElementById('btn-record-setup').addEventListener('click', () => { if (!points.length) return alert("Carga un GPX primero"); document.getElementById('modal-record').classList.remove('hidden'); });
 
