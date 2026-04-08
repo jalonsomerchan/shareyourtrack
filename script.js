@@ -2,6 +2,7 @@ let map, points = [], marker;
 let isPlaying = false, followCamera = true, is3D = false;
 let currentIndex = 0, _lastAnimTime = 0, animationId, playbackSpeed = 50;
 let rawGpx = "";
+let lastVideoBlob = null, lastVideoMime = null;
 
 // RADICAL CHANGE: Real-time Canvas Compositor Engine
 // This bypasses html2canvas and getDisplayMedia entirely.
@@ -59,10 +60,14 @@ function setupMapLayers() {
 // Map Switching
 document.getElementById('map-selector').addEventListener('change', (e) => {
     const urls = {
-        dark: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        terrain: "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
-        topo: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        dark:     "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        light:    "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+        satellite:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        terrain:  "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+        topo:     "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        cyclosm:  "https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png",
+        streets:  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        esritopo: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
     };
     const style = map.getStyle();
     style.sources['raster-tiles'].tiles = [urls[e.target.value]];
@@ -186,17 +191,25 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     document.getElementById('loader-text').innerText = "PREPARANDO VIDEO...";
 
     // 1. Config Mode
-    const duration = parseInt(document.getElementById('input-duration').value) || 10;
+    const duration = parseInt(document.getElementById('input-duration').value) || 30;
     const showHeader = document.getElementById('check-header').checked;
     const showStats = document.getElementById('check-stats').checked;
+    const showElevation = document.getElementById('check-elevation').checked;
+    const showProgressBar = document.getElementById('check-progress').checked;
+    const lineWidth = parseInt(document.getElementById('input-linewidth').value) || 6;
+    const quality = parseInt(document.getElementById('input-quality').value) || 720;
+    const qualityScale = quality / 720;
+
+    // Apply custom line width to the map route
+    if (map.getLayer('route-line')) map.setPaintProperty('route-line', 'line-width', lineWidth);
 
     // Calculate Speed to meet Duration (MediaRecorder is real-time, so we adjust playback speed)
     document.getElementById('video-overlay').classList.add('hidden'); // drawn manually in canvas
 
-    // 2. Setup Recording Compositor (720p or 1080p base)
+    // 2. Setup Recording Compositor
     const recordCanvas = document.createElement('canvas');
-    recordCanvas.width = (ratio === '916') ? 720 : (ratio === '11' ? 720 : 1280);
-    recordCanvas.height = (ratio === '916') ? 1280 : (ratio === '11' ? 720 : 720);
+    recordCanvas.width = Math.round((ratio === '916' ? 720 : ratio === '11' ? 720 : 1280) * qualityScale);
+    recordCanvas.height = Math.round((ratio === '916' ? 1280 : ratio === '11' ? 720 : 720) * qualityScale);
     const rctx = recordCanvas.getContext('2d');
 
     const stream = recordCanvas.captureStream(30);
@@ -261,7 +274,7 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
         rctx.textBaseline = 'middle';
         rctx.fillText(emoji, markerX, markerY);
 
-        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, currentIndex, showHeader, showStats);
+        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, currentIndex, showHeader, showStats, showElevation, showProgressBar);
         requestAnimationFrame(renderLoop);
     };
     renderLoop();
@@ -298,12 +311,10 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
             cleanup();
             return;
         }
-        const blob = new Blob(chunks, { type: selectedMime });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `shareyourtrack_hd_${Date.now()}.webm`;
-        a.click();
+        lastVideoBlob = new Blob(chunks, { type: selectedMime });
+        lastVideoMime = selectedMime;
         cleanup();
+        document.getElementById('modal-video-ready').classList.remove('hidden');
     };
 
     try {
@@ -315,13 +326,13 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     }
 });
 
-function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats) {
+function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats, showElevation, showProgressBar) {
     const padding = w * 0.1;
 
     if (showHeader) {
-        const g1 = ctx.createLinearGradient(0, 0, 0, h * 0.2);
-        g1.addColorStop(0, 'rgba(2,6,23,0.8)'); g1.addColorStop(1, 'transparent');
-        ctx.fillStyle = g1; ctx.fillRect(0, 0, w, h * 0.2);
+        const g1 = ctx.createLinearGradient(0, 0, 0, h * 0.22);
+        g1.addColorStop(0, 'rgba(2,6,23,0.85)'); g1.addColorStop(1, 'transparent');
+        ctx.fillStyle = g1; ctx.fillRect(0, 0, w, h * 0.22);
 
         ctx.textAlign = 'center'; ctx.fillStyle = 'white';
         ctx.font = `900 italic ${Math.floor(w * 0.08)}px Inter`;
@@ -331,25 +342,87 @@ function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, 
     }
 
     if (showStats) {
-        const g2 = ctx.createLinearGradient(0, h * 0.8, 0, h);
-        g2.addColorStop(0, 'transparent'); g2.addColorStop(1, 'rgba(2,6,23,0.8)');
-        ctx.fillStyle = g2; ctx.fillRect(0, h * 0.8, w, h * 0.2);
+        const g2 = ctx.createLinearGradient(0, h * 0.75, 0, h);
+        g2.addColorStop(0, 'transparent'); g2.addColorStop(1, 'rgba(2,6,23,0.9)');
+        ctx.fillStyle = g2; ctx.fillRect(0, h * 0.75, w, h * 0.25);
 
         const dist = calculateDistance(0, index);
         const elapsed = (new Date(points[index].time) - new Date(points[0].time)) / 1000;
         const speed = elapsed > 0 ? (dist / 1000) / (elapsed / 3600) : 0;
+        const labelSize = Math.floor(w * 0.022);
+        const valueSize = Math.floor(w * 0.06);
+        const labelY = h - padding - 22;
+        const valueY = h - padding + 16;
 
-        ctx.textAlign = 'left'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${Math.floor(w * 0.02)}px Inter`;
-        ctx.fillText('DISTANCIA', padding, h - padding - 20);
-        ctx.fillStyle = 'white'; ctx.font = `900 italic ${Math.floor(w * 0.06)}px Inter`;
-        ctx.fillText((dist / 1000).toFixed(1) + ' KM', padding, h - padding + 15);
+        if (showElevation) {
+            // Three stats: dist | ele | speed
+            const eleGain = calculateElevationGain(0, index);
+            ctx.textAlign = 'left'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${labelSize}px Inter`;
+            ctx.fillText('DISTANCIA', padding, labelY);
+            ctx.fillStyle = 'white'; ctx.font = `900 italic ${valueSize}px Inter`;
+            ctx.fillText((dist / 1000).toFixed(1) + ' km', padding, valueY);
 
-        ctx.textAlign = 'right'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${Math.floor(w * 0.02)}px Inter`;
-        ctx.fillText('VEL. MEDIA', w - padding, h - padding - 20);
-        ctx.fillStyle = 'white'; ctx.font = `900 italic ${Math.floor(w * 0.06)}px Inter`;
-        ctx.fillText(speed.toFixed(1) + ' KM/H', w - padding, h - padding + 15);
+            ctx.textAlign = 'center'; ctx.fillStyle = '#34d399'; ctx.font = `700 ${labelSize}px Inter`;
+            ctx.fillText('DESNIVEL', w / 2, labelY);
+            ctx.fillStyle = 'white'; ctx.font = `900 italic ${valueSize}px Inter`;
+            ctx.fillText('+' + Math.round(eleGain) + ' m', w / 2, valueY);
+
+            ctx.textAlign = 'right'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${labelSize}px Inter`;
+            ctx.fillText('VEL. MEDIA', w - padding, labelY);
+            ctx.fillStyle = 'white'; ctx.font = `900 italic ${valueSize}px Inter`;
+            ctx.fillText(speed.toFixed(1) + ' km/h', w - padding, valueY);
+        } else {
+            // Two stats: dist | speed
+            ctx.textAlign = 'left'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${labelSize}px Inter`;
+            ctx.fillText('DISTANCIA', padding, labelY);
+            ctx.fillStyle = 'white'; ctx.font = `900 italic ${valueSize}px Inter`;
+            ctx.fillText((dist / 1000).toFixed(1) + ' km', padding, valueY);
+
+            ctx.textAlign = 'right'; ctx.fillStyle = '#94a3b8'; ctx.font = `700 ${labelSize}px Inter`;
+            ctx.fillText('VEL. MEDIA', w - padding, labelY);
+            ctx.fillStyle = 'white'; ctx.font = `900 italic ${valueSize}px Inter`;
+            ctx.fillText(speed.toFixed(1) + ' km/h', w - padding, valueY);
+        }
+    }
+
+    if (showProgressBar) {
+        const progress = points.length > 1 ? index / (points.length - 1) : 0;
+        const barH = Math.max(3, Math.round(h * 0.005));
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(0, h - barH, w, barH);
+        ctx.fillStyle = color;
+        ctx.fillRect(0, h - barH, w * progress, barH);
     }
 }
+
+// Video share/download modal
+function downloadVideo() {
+    if (!lastVideoBlob) return;
+    const ext = lastVideoMime.includes('mp4') ? 'mp4' : 'webm';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(lastVideoBlob);
+    a.download = `shareyourtrack_${Date.now()}.${ext}`;
+    a.click();
+    document.getElementById('modal-video-ready').classList.add('hidden');
+}
+
+document.getElementById('btn-download-video').addEventListener('click', downloadVideo);
+
+document.getElementById('btn-share-video').addEventListener('click', async () => {
+    if (!lastVideoBlob) return;
+    const ext = lastVideoMime.includes('mp4') ? 'mp4' : 'webm';
+    const file = new File([lastVideoBlob], `shareyourtrack_${Date.now()}.${ext}`, { type: lastVideoMime });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: document.getElementById('input-title').value || 'Mi Ruta' });
+            document.getElementById('modal-video-ready').classList.add('hidden');
+        } catch (e) {
+            if (e.name !== 'AbortError') downloadVideo();
+        }
+    } else {
+        downloadVideo();
+    }
+});
 
 // Standard Helpers
 function calculateDistance(f, t) {
@@ -361,6 +434,16 @@ function calculateDistance(f, t) {
         d += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
     return d;
+}
+function calculateElevationGain(f, t) {
+    let gain = 0;
+    for (let i = f; i < t; i++) {
+        if (points[i + 1] && points[i].ele != null && points[i + 1].ele != null) {
+            const diff = points[i + 1].ele - points[i].ele;
+            if (diff > 0) gain += diff;
+        }
+    }
+    return gain;
 }
 function formatTime(s) { const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`; }
 function formatDate(dt) { const d = new Date(dt), m = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]; return `${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()}`; }

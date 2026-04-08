@@ -58,9 +58,13 @@
                 <select id="map-selector"
                     class="bg-transparent text-xs font-bold px-3 py-2 outline-none border-none cursor-pointer">
                     <option value="dark">🌙 Dark</option>
+                    <option value="light">☀️ Light</option>
                     <option value="satellite">🛰️ Satélite</option>
                     <option value="terrain">⛰️ Relieve</option>
                     <option value="topo">🗺️ Topo</option>
+                    <option value="cyclosm">🚴 Ciclismo</option>
+                    <option value="streets">🏙️ Calles</option>
+                    <option value="esritopo">🗻 ESRI Topo</option>
                 </select>
             </div>
         </div>
@@ -176,14 +180,29 @@
                         </select>
                     </div>
                     <div class="flex-1 space-y-2">
-                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Duración
-                            (seg)</label>
-                        <input type="number" id="input-duration" value="10" min="5" max="60"
+                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Calidad</label>
+                        <select id="input-quality"
+                            class="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 outline-none cursor-pointer">
+                            <option value="720">720p</option>
+                            <option value="1080">1080p</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-1 space-y-2">
+                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Duración (seg)</label>
+                        <input type="number" id="input-duration" value="30" min="5" max="120"
+                            class="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 transition">
+                    </div>
+                    <div class="flex-1 space-y-2">
+                        <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Trazo (px)</label>
+                        <input type="number" id="input-linewidth" value="6" min="2" max="20"
                             class="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 transition">
                     </div>
                 </div>
 
-                <div class="flex gap-6 pt-2">
+                <div class="flex flex-wrap gap-x-6 gap-y-3 pt-2">
                     <label class="flex items-center gap-3 cursor-pointer">
                         <input type="checkbox" id="check-header" checked
                             class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
@@ -193,6 +212,16 @@
                         <input type="checkbox" id="check-stats" checked
                             class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
                         <span class="text-[10px] font-bold uppercase text-slate-400">Estadísticas</span>
+                    </label>
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" id="check-elevation"
+                            class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
+                        <span class="text-[10px] font-bold uppercase text-slate-400">Elevación</span>
+                    </label>
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" id="check-progress" checked
+                            class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
+                        <span class="text-[10px] font-bold uppercase text-slate-400">Progreso</span>
                     </label>
                 </div>
             </div>
@@ -212,6 +241,28 @@
         class="fixed inset-0 z-[3000] bg-slate-950/80 backdrop-blur-md hidden flex flex-col items-center justify-center">
         <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
         <p class="mt-4 text-xs font-bold tracking-widest text-blue-400 uppercase" id="loader-text">Procesando...</p>
+    </div>
+
+    <!-- Modal: Vídeo Listo -->
+    <div id="modal-video-ready"
+        class="fixed inset-0 z-[4000] bg-slate-950/90 backdrop-blur-xl hidden flex items-center justify-center p-4">
+        <div class="glass w-full max-w-xs rounded-[2.5rem] p-8 space-y-6 text-center shadow-2xl border-white/10">
+            <div class="text-5xl">🎬</div>
+            <div>
+                <h2 class="text-xl font-bold">¡Vídeo listo!</h2>
+                <p class="text-xs text-slate-400 mt-1">Descarga o comparte tu ruta</p>
+            </div>
+            <div class="space-y-3">
+                <button id="btn-download-video"
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition flex items-center justify-center gap-2">
+                    <i class="fas fa-download"></i> Descargar
+                </button>
+                <button id="btn-share-video"
+                    class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-4 rounded-2xl active:scale-95 transition flex items-center justify-center gap-2">
+                    <i class="fas fa-share-nodes"></i> Compartir
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Pantalla de inicio -->
