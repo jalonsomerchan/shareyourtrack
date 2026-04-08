@@ -85,17 +85,41 @@ document.getElementById('toggle-follow').addEventListener('click', (e) => {
 });
 
 // GPX Handling
-document.getElementById('gpx-input').addEventListener('change', (e) => {
-    const file = e.target.files[0];
+function handleGpxFile(file) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (f) => {
         rawGpx = f.target.result;
         const gpx = new gpxParser();
         gpx.parse(rawGpx);
-        if (gpx.tracks[0]) processTrack(gpx.tracks[0]);
+        if (gpx.tracks[0]) {
+            processTrack(gpx.tracks[0]);
+            document.getElementById('intro-screen').classList.add('hidden');
+        }
     };
     reader.readAsText(file);
+}
+
+document.getElementById('gpx-input').addEventListener('change', (e) => handleGpxFile(e.target.files[0]));
+document.getElementById('gpx-input-intro').addEventListener('change', (e) => handleGpxFile(e.target.files[0]));
+
+// Drag & drop en pantalla de inicio
+const introScreen = document.getElementById('intro-screen');
+const introDropLabel = document.getElementById('intro-drop-label');
+introScreen.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    introDropLabel.classList.add('border-blue-400', '!bg-blue-500');
+});
+introScreen.addEventListener('dragleave', (e) => {
+    if (!introScreen.contains(e.relatedTarget)) {
+        introDropLabel.classList.remove('border-blue-400', '!bg-blue-500');
+    }
+});
+introScreen.addEventListener('drop', (e) => {
+    e.preventDefault();
+    introDropLabel.classList.remove('border-blue-400', '!bg-blue-500');
+    const file = e.dataTransfer.files[0];
+    if (file) handleGpxFile(file);
 });
 
 function processTrack(track) {
@@ -166,22 +190,8 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     const showHeader = document.getElementById('check-header').checked;
     const showStats = document.getElementById('check-stats').checked;
 
-    // Calculate Speed to meet Duration (33fps * duration = total frames)
-    // Actually, MediaRecorder is real-time, so we adjust the play speed.
-    const container = document.getElementById('map-container');
-    const overlay = document.getElementById('video-overlay');
-    const originalWidth = container.style.width, originalHeight = container.style.height;
-
-    // Aspect Ratios for UI preview
-    const uiW = (ratio === '916') ? 360 : (ratio === '11' ? 400 : 500);
-    const uiH = (ratio === '916') ? 640 : (ratio === '11' ? 400 : 281);
-
-    container.style.width = uiW + 'px';
-    container.style.height = uiH + 'px';
-    container.style.margin = 'auto';
-    container.classList.add('shadow-2xl', 'border-[12px]', 'border-white/10', 'rounded-[3rem]');
-    overlay.classList.add('hidden'); // Hide live overlay, we draw it manually in canvas
-    map.resize();
+    // Calculate Speed to meet Duration (MediaRecorder is real-time, so we adjust playback speed)
+    document.getElementById('video-overlay').classList.add('hidden'); // drawn manually in canvas
 
     // 2. Setup Recording Compositor (720p or 1080p base)
     const recordCanvas = document.createElement('canvas');
@@ -216,25 +226,42 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     playbackSpeed = totalDistTime / duration;
     const originalSpeedVal = document.getElementById('speed-val').value;
 
-    // 4. Frame Compositor Loop
+    // 4. Frame Compositor Loop — crop the main map canvas to the target aspect ratio
     let recording = true;
     const emoji = document.getElementById('route-icon').value || "🚴";
+    const rW = recordCanvas.width, rH = recordCanvas.height;
     const renderLoop = () => {
         if (!recording) return;
         const mapCanvas = map.getCanvas();
-        rctx.fillStyle = '#020617';
-        rctx.fillRect(0, 0, recordCanvas.width, recordCanvas.height);
-        rctx.drawImage(mapCanvas, 0, 0, recordCanvas.width, recordCanvas.height);
+        const mW = mapCanvas.width, mH = mapCanvas.height;
 
+        // Center-crop map canvas to match target aspect ratio
+        const targetAspect = rW / rH;
+        const mapAspect = mW / mH;
+        let sx, sy, sw, sh;
+        if (mapAspect > targetAspect) {
+            sh = mH; sw = Math.round(mH * targetAspect);
+            sx = Math.round((mW - sw) / 2); sy = 0;
+        } else {
+            sw = mW; sh = Math.round(mW / targetAspect);
+            sx = 0; sy = Math.round((mH - sh) / 2);
+        }
+
+        rctx.fillStyle = '#020617';
+        rctx.fillRect(0, 0, rW, rH);
+        rctx.drawImage(mapCanvas, sx, sy, sw, sh, 0, 0, rW, rH);
+
+        // Marker: CSS px → device px → crop offset → record canvas coords
+        const dpr = mW / mapCanvas.clientWidth;
         const pos = map.project([points[currentIndex].lon, points[currentIndex].lat]);
-        const scaleX = recordCanvas.width / mapCanvas.clientWidth;
-        const scaleY = recordCanvas.height / mapCanvas.clientHeight;
-        rctx.font = `${Math.floor(recordCanvas.width * 0.08)}px serif`;
+        const markerX = (pos.x * dpr - sx) * (rW / sw);
+        const markerY = (pos.y * dpr - sy) * (rH / sh);
+        rctx.font = `${Math.floor(rW * 0.08)}px serif`;
         rctx.textAlign = 'center';
         rctx.textBaseline = 'middle';
-        rctx.fillText(emoji, pos.x * scaleX, pos.y * scaleY);
+        rctx.fillText(emoji, markerX, markerY);
 
-        drawProOverlayLegacy(rctx, recordCanvas.width, recordCanvas.height, title, dateStr, color, currentIndex, showHeader, showStats);
+        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, currentIndex, showHeader, showStats);
         requestAnimationFrame(renderLoop);
     };
     renderLoop();
@@ -242,16 +269,15 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     // 5. Play Animation and Track Progress
     currentIndex = 0;
     isPlaying = true;
+    const originalFollowCamera = followCamera;
+    followCamera = true; // Ensure map stays centered so the crop always captures the marker
 
     function cleanup() {
         clearInterval(checkDone);
         recording = false;
-        container.style.width = originalWidth;
-        container.style.height = originalHeight;
-        container.style.margin = '0';
-        container.classList.remove('shadow-2xl', 'border-[12px]', 'border-white/10', 'rounded-[3rem]');
+        followCamera = originalFollowCamera;
         document.getElementById('speed-val').value = originalSpeedVal;
-        map.resize();
+        playbackSpeed = parseFloat(originalSpeedVal);
         document.getElementById('loader').classList.add('hidden');
     }
 

@@ -214,6 +214,42 @@
         <p class="mt-4 text-xs font-bold tracking-widest text-blue-400 uppercase" id="loader-text">Procesando...</p>
     </div>
 
+    <!-- Pantalla de inicio -->
+    <div id="intro-screen" class="fixed inset-0 z-[5000] bg-slate-950 flex items-center justify-center p-6">
+        <div class="w-full max-w-sm space-y-8 text-center">
+
+            <div class="space-y-3">
+                <div class="text-6xl">🛣️</div>
+                <h1 class="text-5xl font-black italic tracking-tighter text-white uppercase leading-none">Share<br>Your Track</h1>
+                <p class="text-slate-400 text-sm leading-relaxed mt-2">Convierte tu ruta GPX en un vídeo animado<br>listo para compartir en redes.</p>
+            </div>
+
+            <div class="glass rounded-2xl p-4 space-y-3 text-left">
+                <div class="flex items-center gap-3 text-sm text-slate-300">
+                    <span class="text-lg">🗺️</span>
+                    <span>Múltiples estilos de mapa y vista 3D</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm text-slate-300">
+                    <span class="text-lg">🎬</span>
+                    <span>Exporta en 9:16, 1:1 o 16:9 en alta resolución</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm text-slate-300">
+                    <span class="text-lg">✏️</span>
+                    <span>Personaliza título, color e icono</span>
+                </div>
+            </div>
+
+            <label id="intro-drop-label" class="flex flex-col items-center gap-2 w-full bg-blue-600 hover:bg-blue-500 py-6 px-6 rounded-3xl cursor-pointer active:scale-95 transition-all shadow-xl shadow-blue-600/20 border-2 border-transparent">
+                <i class="fas fa-file-arrow-up text-3xl"></i>
+                <span class="text-base font-bold">Cargar archivo GPX</span>
+                <span class="text-xs text-blue-200">o arrastra aquí tu fichero</span>
+                <input type="file" id="gpx-input-intro" accept=".gpx" class="hidden">
+            </label>
+
+            <p class="text-slate-600 text-xs">Compatible con Garmin · Strava · Komoot · Wahoo</p>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 
