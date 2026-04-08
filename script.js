@@ -3,6 +3,7 @@ let isPlaying = false, followCamera = true, is3D = false;
 let currentIndex = 0, _lastAnimTime = 0, animationId, playbackSpeed = 50;
 let rawGpx = "";
 let lastVideoBlob = null, lastVideoMime = null;
+let loopEnabled = false;
 
 // RADICAL CHANGE: Real-time Canvas Compositor Engine
 // This bypasses html2canvas and getDisplayMedia entirely.
@@ -176,154 +177,185 @@ function updatePosition(index) {
     }
 }
 
-// EXPORT ENGINE (The Ultimate Radical Strategy)
-// We record the main view by mirroring the map canvas to a specific composition canvas.
+// Pre-carga de tiles: recorre toda la ruta rápidamente para forzar la carga del mapa
+function preloadMapTiles(zoomLevel) {
+    return new Promise((resolve) => {
+        document.getElementById('loader-text').innerText = "CARGANDO MAPA... 0%";
+        const step = Math.max(1, Math.floor(points.length / 200));
+        let i = 0;
+        const visit = () => {
+            if (i >= points.length) {
+                map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: zoomLevel - 1.5 });
+                if (map.areTilesLoaded()) resolve();
+                else map.once('idle', resolve);
+                return;
+            }
+            const pct = Math.round(i / points.length * 100);
+            document.getElementById('loader-text').innerText = `CARGANDO MAPA... ${pct}%`;
+            map.jumpTo({ center: [points[i].lon, points[i].lat], zoom: zoomLevel });
+            i += step;
+            requestAnimationFrame(visit);
+        };
+        visit();
+    });
+}
+
+function easeInOut(t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+// EXPORT ENGINE
 document.getElementById('btn-start-record').addEventListener('click', async () => {
     if (!points.length) return alert("Carga un archivo GPX primero");
 
-    const ratio = document.getElementById('input-ratio').value;
-    const title = document.getElementById('input-title').value;
-    const dateStr = document.getElementById('input-date').value;
-    const color = document.getElementById('route-color').value;
+    const ratio        = document.getElementById('input-ratio').value;
+    const title        = document.getElementById('input-title').value;
+    const dateStr      = document.getElementById('input-date').value;
+    const color        = document.getElementById('route-color').value;
+    const duration     = parseInt(document.getElementById('input-duration').value) || 30;
+    const showHeader   = document.getElementById('check-header').checked;
+    const showStats    = document.getElementById('check-stats').checked;
+    const showElevation= document.getElementById('check-elevation').checked;
+    const showProgress = document.getElementById('check-progress').checked;
+    const lineWidth    = parseInt(document.getElementById('input-linewidth').value) || 6;
+    const qualityScale = (parseInt(document.getElementById('input-quality').value) || 720) / 720;
+    const zoomLevel    = parseFloat(document.getElementById('zoom-level').value);
 
     document.getElementById('modal-record').classList.add('hidden');
     document.getElementById('loader').classList.remove('hidden');
-    document.getElementById('loader-text').innerText = "PREPARANDO VIDEO...";
-
-    // 1. Config Mode
-    const duration = parseInt(document.getElementById('input-duration').value) || 30;
-    const showHeader = document.getElementById('check-header').checked;
-    const showStats = document.getElementById('check-stats').checked;
-    const showElevation = document.getElementById('check-elevation').checked;
-    const showProgressBar = document.getElementById('check-progress').checked;
-    const lineWidth = parseInt(document.getElementById('input-linewidth').value) || 6;
-    const quality = parseInt(document.getElementById('input-quality').value) || 720;
-    const qualityScale = quality / 720;
-
-    // Apply custom line width to the map route
+    document.getElementById('video-overlay').classList.add('hidden');
     if (map.getLayer('route-line')) map.setPaintProperty('route-line', 'line-width', lineWidth);
 
-    // Calculate Speed to meet Duration (MediaRecorder is real-time, so we adjust playback speed)
-    document.getElementById('video-overlay').classList.add('hidden'); // drawn manually in canvas
+    // 1. PRE-RENDER: visitar todos los viewports para cargar tiles
+    await preloadMapTiles(zoomLevel);
+    document.getElementById('loader-text').innerText = "PREPARANDO GRABACIÓN...";
+    await new Promise(r => setTimeout(r, 500));
 
-    // 2. Setup Recording Compositor
+    // 2. CANVAS + RECORDER
+    const rW = Math.round((ratio === '916' ? 720 : ratio === '11' ? 720 : 1280) * qualityScale);
+    const rH = Math.round((ratio === '916' ? 1280 : ratio === '11' ? 720 : 720) * qualityScale);
     const recordCanvas = document.createElement('canvas');
-    recordCanvas.width = Math.round((ratio === '916' ? 720 : ratio === '11' ? 720 : 1280) * qualityScale);
-    recordCanvas.height = Math.round((ratio === '916' ? 1280 : ratio === '11' ? 720 : 720) * qualityScale);
+    recordCanvas.width = rW; recordCanvas.height = rH;
     const rctx = recordCanvas.getContext('2d');
 
-    const stream = recordCanvas.captureStream(30);
-    let recorder;
-    let chunks = [];
-    const mimeTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
-    ];
+    const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+    const selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m));
+    if (!selectedMime) { document.getElementById('loader').classList.add('hidden'); return alert("Tu navegador no soporta grabación de video."); }
 
-    let selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m));
-    if (!selectedMime) return alert("Tu navegador no soporta grabación de video.");
-
-    try {
-        recorder = new MediaRecorder(stream, { mimeType: selectedMime, videoBitsPerSecond: 10000000 });
-    } catch (e) {
-        alert("Error al inicializar grabadora: " + e.message);
-        return;
-    }
-
+    let recorder, chunks = [];
+    try { recorder = new MediaRecorder(recordCanvas.captureStream(30), { mimeType: selectedMime, videoBitsPerSecond: 10000000 }); }
+    catch (e) { document.getElementById('loader').classList.add('hidden'); return alert("Error: " + e.message); }
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
-    // 3. Dynamic speed adjustment
+    // 3. VELOCIDAD para la fase principal
     const totalDistTime = (new Date(points[points.length - 1].time) - new Date(points[0].time)) / 1000;
-    playbackSpeed = totalDistTime / duration;
+    const mainSpeed = totalDistTime / duration;
     const originalSpeedVal = document.getElementById('speed-val').value;
+    const originalFollowCamera = followCamera;
+    followCamera = true;
 
-    // 4. Frame Compositor Loop — crop the main map canvas to the target aspect ratio
-    let recording = true;
+    // 4. FASES: intro (3s) → main → outro (5s)
+    const INTRO_MS = 3000, OUTRO_MS = 5000;
+    let recordPhase = 'intro', phaseT0 = null, outroParams = null, recording = true;
     const emoji = document.getElementById('route-icon').value || "🚴";
-    const rW = recordCanvas.width, rH = recordCanvas.height;
-    const renderLoop = () => {
+
+    // Posición inicial para intro
+    currentIndex = 0;
+    map.getSource('route').setData({ type: 'FeatureCollection', features: [] });
+    map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: zoomLevel - 1.5 });
+
+    // 5. RENDER LOOP
+    const renderLoop = (ts) => {
         if (!recording) return;
+        if (phaseT0 === null) phaseT0 = ts;
+        const pe = ts - phaseT0; // ms transcurridos en la fase actual
+
+        // — Transiciones de fase —
+        if (recordPhase === 'intro' && pe >= INTRO_MS) {
+            recordPhase = 'main'; phaseT0 = null;
+            currentIndex = 0; playbackSpeed = mainSpeed; _lastAnimTime = 0; isPlaying = true;
+            document.getElementById('play-icon').className = 'fas fa-pause';
+            animationId = requestAnimationFrame(animate);
+
+        } else if (recordPhase === 'main' && !isPlaying && currentIndex >= points.length - 1) {
+            recordPhase = 'outro'; phaseT0 = null;
+            // Dibujar ruta completa
+            map.getSource('route').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: points.map(p => [p.lon, p.lat]) } });
+            // Calcular cámara para encuadrar toda la ruta
+            const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
+            const cam = map.cameraForBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 60 });
+            outroParams = { sZ: map.getZoom(), eZ: cam.zoom, sLng: map.getCenter().lng, sLat: map.getCenter().lat, eLng: cam.center.lng, eLat: cam.center.lat };
+
+        } else if (recordPhase === 'outro') {
+            if (pe >= OUTRO_MS) {
+                recording = false;
+                setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 200);
+                return;
+            }
+            const t = easeInOut(pe / OUTRO_MS);
+            map.jumpTo({ center: [outroParams.sLng + (outroParams.eLng - outroParams.sLng) * t, outroParams.sLat + (outroParams.eLat - outroParams.sLat) * t], zoom: outroParams.sZ + (outroParams.eZ - outroParams.sZ) * t });
+        }
+
+        // — Cámara del intro: zoom-in suave —
+        if (recordPhase === 'intro') {
+            const t = easeInOut(Math.min(pe / INTRO_MS, 1));
+            map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: (zoomLevel - 1.5) + 1.5 * t });
+        }
+
+        // — Composición de frame —
         const mapCanvas = map.getCanvas();
         const mW = mapCanvas.width, mH = mapCanvas.height;
-
-        // Center-crop map canvas to match target aspect ratio
-        const targetAspect = rW / rH;
-        const mapAspect = mW / mH;
+        const tA = rW / rH, mA = mW / mH;
         let sx, sy, sw, sh;
-        if (mapAspect > targetAspect) {
-            sh = mH; sw = Math.round(mH * targetAspect);
-            sx = Math.round((mW - sw) / 2); sy = 0;
-        } else {
-            sw = mW; sh = Math.round(mW / targetAspect);
-            sx = 0; sy = Math.round((mH - sh) / 2);
-        }
+        if (mA > tA) { sh = mH; sw = Math.round(mH * tA); sx = Math.round((mW - sw) / 2); sy = 0; }
+        else         { sw = mW; sh = Math.round(mW / tA); sx = 0; sy = Math.round((mH - sh) / 2); }
 
         rctx.fillStyle = '#020617';
         rctx.fillRect(0, 0, rW, rH);
         rctx.drawImage(mapCanvas, sx, sy, sw, sh, 0, 0, rW, rH);
 
-        // Marker: CSS px → device px → crop offset → record canvas coords
+        // — Marcador —
         const dpr = mW / mapCanvas.clientWidth;
-        const pos = map.project([points[currentIndex].lon, points[currentIndex].lat]);
-        const markerX = (pos.x * dpr - sx) * (rW / sw);
-        const markerY = (pos.y * dpr - sy) * (rH / sh);
+        const idx = recordPhase === 'outro' ? points.length - 1 : currentIndex;
+        const pos = map.project([points[idx].lon, points[idx].lat]);
+        const mx = (pos.x * dpr - sx) * (rW / sw), my = (pos.y * dpr - sy) * (rH / sh);
         rctx.font = `${Math.floor(rW * 0.08)}px serif`;
-        rctx.textAlign = 'center';
-        rctx.textBaseline = 'middle';
-        rctx.fillText(emoji, markerX, markerY);
+        rctx.textAlign = 'center'; rctx.textBaseline = 'middle';
+        rctx.fillText(emoji, mx, my);
 
-        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, currentIndex, showHeader, showStats, showElevation, showProgressBar);
+        // — Overlay con fade in/out —
+        const alpha = recordPhase === 'intro' ? easeInOut(Math.min(pe / INTRO_MS, 1))
+                    : recordPhase === 'outro' ? 1 - easeInOut(pe / OUTRO_MS) : 1;
+        rctx.globalAlpha = alpha;
+        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, idx, showHeader, recordPhase !== 'intro' && showStats, showElevation, showProgress);
+        rctx.globalAlpha = 1;
+
         requestAnimationFrame(renderLoop);
     };
-    renderLoop();
 
-    // 5. Play Animation and Track Progress
-    currentIndex = 0;
-    isPlaying = true;
-    const originalFollowCamera = followCamera;
-    followCamera = true; // Ensure map stays centered so the crop always captures the marker
+    // 6. PROGRESO en loader
+    const checkDone = setInterval(() => {
+        if (!recording) { clearInterval(checkDone); return; }
+        const msgs = { intro: 'INTRO... 3s', main: `GRABANDO: ${Math.round((currentIndex / (points.length - 1)) * 100)}%`, outro: 'FINAL... 5s' };
+        document.getElementById('loader-text').innerText = msgs[recordPhase] || 'GRABANDO...';
+    }, 200);
 
     function cleanup() {
         clearInterval(checkDone);
-        recording = false;
         followCamera = originalFollowCamera;
         document.getElementById('speed-val').value = originalSpeedVal;
         playbackSpeed = parseFloat(originalSpeedVal);
         document.getElementById('loader').classList.add('hidden');
     }
 
-    const checkDone = setInterval(() => {
-        const percent = Math.round((currentIndex / (points.length - 1)) * 100);
-        document.getElementById('loader-text').innerText = `GRABANDO: ${percent}%`;
-
-        if (!isPlaying) {
-            clearInterval(checkDone);
-            recording = false;
-            setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 500);
-        }
-    }, 100);
-
     recorder.onstop = () => {
-        if (chunks.length === 0) {
-            alert("Error: No se capturaron datos. Intenta otro formato.");
-            cleanup();
-            return;
-        }
+        if (chunks.length === 0) { alert("Error: No se capturaron datos. Intenta otro formato."); cleanup(); return; }
         lastVideoBlob = new Blob(chunks, { type: selectedMime });
         lastVideoMime = selectedMime;
         cleanup();
         document.getElementById('modal-video-ready').classList.remove('hidden');
     };
 
-    try {
-        recorder.start();
-        play();
-    } catch (e) {
-        alert("Error al iniciar grabación: " + e.message);
-        cleanup();
-    }
+    try { recorder.start(); requestAnimationFrame(renderLoop); }
+    catch (e) { alert("Error al iniciar grabación: " + e.message); cleanup(); }
 });
 
 function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats, showElevation, showProgressBar) {
@@ -459,8 +491,10 @@ function animate(timestamp) {
     const target = new Date(points[currentIndex].time).getTime() + delta;
     while (next < points.length - 1 && new Date(points[next].time).getTime() < target) next++;
     if (next !== currentIndex) { currentIndex = next; updatePosition(currentIndex); }
-    if (currentIndex >= points.length - 1) { pause(); }
-    else animationId = requestAnimationFrame(animate);
+    if (currentIndex >= points.length - 1) {
+        if (loopEnabled) { currentIndex = 0; _lastAnimTime = 0; updatePosition(0); animationId = requestAnimationFrame(animate); }
+        else pause();
+    } else animationId = requestAnimationFrame(animate);
 }
 function play() {
     if (!isPlaying) {
@@ -476,6 +510,12 @@ document.getElementById('btn-play').addEventListener('click', () => isPlaying ? 
 document.getElementById('speed-val').addEventListener('change', (e) => playbackSpeed = parseFloat(e.target.value));
 document.getElementById('timeline').addEventListener('input', (e) => { pause(); currentIndex = parseInt(e.target.value); updatePosition(currentIndex); });
 document.getElementById('btn-record-setup').addEventListener('click', () => { if (!points.length) return alert("Carga un GPX primero"); document.getElementById('modal-record').classList.remove('hidden'); });
+document.getElementById('btn-restart').addEventListener('click', () => { pause(); currentIndex = 0; updatePosition(0); });
+document.getElementById('btn-loop').addEventListener('click', (e) => {
+    loopEnabled = !loopEnabled;
+    e.currentTarget.classList.toggle('text-blue-400', loopEnabled);
+    e.currentTarget.classList.toggle('bg-blue-500/20', loopEnabled);
+});
 
 document.getElementById('btn-share').addEventListener('click', async () => {
     const l = document.getElementById('loader'); l.classList.remove('hidden');
