@@ -1,18 +1,20 @@
 # Share Your Track
 
 <p align="center">
-  <strong>Turn any GPX activity into a polished animated route video, ready to download or share on social media.</strong>
+  <strong>Turn your Strava, Garmin, Komoot or Wahoo GPX into a viral animated route video in seconds.</strong>
 </p>
 
 <p align="center">
   <a href="https://shareyourtrack.alon.one">
-    <img alt="Live demo" src="https://img.shields.io/badge/demo-try%20it%20online-blue?style=for-the-badge">
+    <img alt="Live demo" src="https://img.shields.io/badge/try%20the%20demo-shareyourtrack.alon.one-2563eb?style=for-the-badge">
   </a>
-  <a href="https://github.com/jalonsomerchan/shareyourtrack">
-    <img alt="GitHub repo" src="https://img.shields.io/badge/github-repository-181717?style=for-the-badge&logo=github">
+  <a href="https://github.com/jalonsomerchan/shareyourtrack/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/jalonsomerchan/shareyourtrack?style=for-the-badge&logo=github">
   </a>
-  <img alt="Static app" src="https://img.shields.io/badge/app-static%20web-success?style=for-the-badge">
-  <img alt="No build step" src="https://img.shields.io/badge/build-none-lightgrey?style=for-the-badge">
+  <a href="https://github.com/jalonsomerchan/shareyourtrack/issues">
+    <img alt="GitHub issues" src="https://img.shields.io/github/issues/jalonsomerchan/shareyourtrack?style=for-the-badge">
+  </a>
+  <img alt="No backend" src="https://img.shields.io/badge/backend-not%20needed-success?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -23,11 +25,51 @@
   <img alt="MapLibre GL" src="https://img.shields.io/badge/MapLibre%20GL-map-blue?style=flat-square">
 </p>
 
+<p align="center">
+  <a href="https://shareyourtrack.alon.one"><strong>🚴 Try it online</strong></a>
+  ·
+  <a href="#features"><strong>Features</strong></a>
+  ·
+  <a href="#why"><strong>Why</strong></a>
+  ·
+  <a href="#running-locally"><strong>Run locally</strong></a>
+</p>
+
+---
+
+## Create social-ready route videos from GPX files
+
+**Share Your Track** is a lightweight browser app that transforms outdoor activity tracks into beautiful animated videos. Upload a `.gpx` file, choose a map style, customize the route and export a video for Reels, TikTok, YouTube Shorts, Stories or any social platform.
+
+<p align="center">
+  <a href="https://shareyourtrack.alon.one">
+    <img src="https://shareyourtrack.alon.one/og-image.jpg" alt="Share Your Track preview" width="900">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://shareyourtrack.alon.one">
+    <img alt="Open Share Your Track" src="https://img.shields.io/badge/open%20the%20app-generate%20your%20route%20video-2563eb?style=for-the-badge">
+  </a>
+</p>
+
+> Demo GIF coming soon. Add `demo.gif` to the repository root and replace this note with an embedded preview for maximum GitHub impact.
+
+---
+
+## Why
+
+Most fitness apps are great at tracking activities, but exporting a beautiful short-form video is usually limited, locked behind a platform, or not customizable enough.
+
+Share Your Track focuses on one simple idea:
+
+> **Your GPX file should be enough to create a polished, shareable route video.**
+
+No account. No backend. No installation. Just open the browser, upload the track and export.
+
 ---
 
 ## Try it online
-
-You can test the project directly from the browser here:
 
 👉 **[https://shareyourtrack.alon.one](https://shareyourtrack.alon.one)**
 
@@ -35,13 +77,14 @@ No account, backend, installation or API key is required. Upload a `.gpx` file e
 
 ---
 
-## What is Share Your Track?
+## Perfect for
 
-**Share Your Track** is a lightweight browser-based tool that converts GPX files into animated route visualisations. It is designed for cyclists, runners, hikers and outdoor creators who want to transform an activity track into a short video for Instagram, TikTok, YouTube Shorts, Stories or any other social platform.
-
-The app loads a GPX file, renders the route on top of several selectable map styles, animates an emoji marker along the track and lets the user export the result as a video in different aspect ratios.
-
-Everything runs locally in the browser using standard web APIs.
+- Cyclists sharing weekend rides.
+- Runners posting race routes.
+- Hikers documenting trails.
+- Travel creators showing road trips.
+- Outdoor clubs creating social clips.
+- Developers looking for a clean client-side GPX/video experiment.
 
 ---
 
@@ -105,10 +148,20 @@ Supported export options:
 - Download generated video.
 - Share generated video using the Web Share API when supported by the browser.
 
-### Sharing
+---
 
-- Share or copy a temporary link to the GPX file using the browser share dialog when available.
-- Download the generated route video as `.webm` or `.mp4`, depending on browser support.
+## Share Your Track vs standard fitness app exports
+
+| Feature | Share Your Track | Typical activity apps |
+| --- | --- | --- |
+| Upload any GPX file | ✅ | ⚠️ Often limited |
+| Browser-only video export | ✅ | ❌ |
+| 9:16, 1:1 and 16:9 formats | ✅ | ⚠️ Limited |
+| Custom route color | ✅ | ⚠️ Limited |
+| Custom emoji marker | ✅ | ❌ |
+| Multiple map providers | ✅ | ⚠️ Platform-specific |
+| No account required | ✅ | ❌ |
+| Open source | ✅ | ❌ |
 
 ---
 
@@ -146,9 +199,10 @@ This approach avoids any server-side rendering process and keeps the whole workf
 
 ```txt
 shareyourtrack/
-├── index.html   # Main UI and HTML structure
-├── script.js    # GPX parsing, map logic, playback and video export
-├── style.css    # Custom visual styles and UI refinements
+├── index.html        # Main UI and HTML structure
+├── script.js         # GPX parsing, map logic, playback and video export
+├── style.css         # Custom visual styles and UI refinements
+├── og-image.jpg      # Social preview image
 └── README.md
 ```
 
