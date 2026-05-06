@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://jalonsomerchan.github.io/shareyourtrack/">
+  <a href="https://shareyourtrack.alon.one">
     <img alt="Live demo" src="https://img.shields.io/badge/demo-try%20it%20online-blue?style=for-the-badge">
   </a>
   <a href="https://github.com/jalonsomerchan/shareyourtrack">
@@ -29,7 +29,7 @@
 
 You can test the project directly from the browser here:
 
-👉 **[https://jalonsomerchan.github.io/shareyourtrack/](https://jalonsomerchan.github.io/shareyourtrack/)**
+👉 **[https://shareyourtrack.alon.one](https://shareyourtrack.alon.one)**
 
 No account, backend, installation or API key is required. Upload a `.gpx` file exported from your favourite activity app and generate an animated route video from it.
 
