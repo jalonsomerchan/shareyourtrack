@@ -93,16 +93,30 @@ document.getElementById('toggle-follow').addEventListener('click', (e) => {
 // GPX Handling
 function handleGpxFile(file) {
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (f) => {
         rawGpx = f.target.result;
-        const gpx = new gpxParser();
-        gpx.parse(rawGpx);
-        if (gpx.tracks[0]) {
-            processTrack(gpx.tracks[0]);
+
+        try {
+            const gpx = new gpxParser();
+            gpx.parse(rawGpx);
+
+            const track = gpx.tracks?.[0];
+
+            if (!track || !Array.isArray(track.points) || track.points.length < 2) {
+                alert('El archivo GPX no contiene una ruta válida.');
+                return;
+            }
+
+            processTrack(track);
             document.getElementById('intro-screen').classList.add('hidden');
+        } catch (err) {
+            console.error(err);
+            alert('No se pudo leer el archivo GPX.');
         }
     };
+
     reader.readAsText(file);
 }
 
@@ -129,14 +143,32 @@ introScreen.addEventListener('drop', (e) => {
 });
 
 function processTrack(track) {
+    if (!track || !Array.isArray(track.points) || track.points.length < 2) {
+        alert('Ruta inválida.');
+        return;
+    }
+
     points = track.points;
+
+    if (!points[0] || points[0].lat == null || points[0].lon == null) {
+        alert('El GPX no contiene coordenadas válidas.');
+        return;
+    }
+
     if (marker) marker.remove();
     const el = document.createElement('div');
     el.className = 'marker-container';
     el.innerHTML = `<div class="marker-emoji text-3xl drop-shadow-lg">${document.getElementById('route-icon').value}</div>`;
     marker = new maplibregl.Marker({ element: el }).setLngLat([points[0].lon, points[0].lat]).addTo(map);
 
-    const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
+    const lats = points.map(p => p.lat).filter(v => v != null);
+    const lons = points.map(p => p.lon).filter(v => v != null);
+
+    if (!lats.length || !lons.length) {
+        alert('Coordenadas inválidas en la ruta.');
+        return;
+    }
+
     map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 50 });
 
     document.getElementById('route-stats').classList.remove('hidden');
@@ -186,8 +218,24 @@ function preloadMapTiles(zoomLevel) {
         const visit = () => {
             if (i >= points.length) {
                 map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: zoomLevel - 1.5 });
-                if (map.areTilesLoaded()) resolve();
-                else map.once('idle', resolve);
+                if (map.areTilesLoaded()) {
+                    resolve();
+                    return;
+                }
+
+                let resolved = false;
+                const timeout = setTimeout(() => {
+                    if (resolved) return;
+                    resolved = true;
+                    resolve();
+                }, 8000);
+
+                map.once('idle', () => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve();
+                });
                 return;
             }
             const pct = Math.round(i / points.length * 100);
