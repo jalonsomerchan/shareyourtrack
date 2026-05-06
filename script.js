@@ -218,8 +218,24 @@ function preloadMapTiles(zoomLevel) {
         const visit = () => {
             if (i >= points.length) {
                 map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: zoomLevel - 1.5 });
-                if (map.areTilesLoaded()) resolve();
-                else map.once('idle', resolve);
+                if (map.areTilesLoaded()) {
+                    resolve();
+                    return;
+                }
+
+                let resolved = false;
+                const timeout = setTimeout(() => {
+                    if (resolved) return;
+                    resolved = true;
+                    resolve();
+                }, 8000);
+
+                map.once('idle', () => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve();
+                });
                 return;
             }
             const pct = Math.round(i / points.length * 100);
