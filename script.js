@@ -7,6 +7,7 @@ let lastVideoUrl = null;
 let loopEnabled = false;
 let customTexts = [];
 let selectedTextId = null;
+let currentOverlayPoint = null;
 let previewMode = false;
 let currentMapStyle = 'satellite';
 let pendingStylePromise = Promise.resolve();
@@ -27,6 +28,145 @@ let showTimeFlags = false;
 let kmFlagStep = 1;
 let timeFlagStep = 10;
 let allRouteFlagFeatures = [];
+let exportInProgress = false;
+
+const STORAGE_KEY = 'shareyourtrack:settings:v2';
+
+const metricCatalog = [
+    { id: 'distance', label: 'Distancia', shortLabel: 'DIST', format: stats => `${(stats.distance / 1000).toFixed(1)} km` },
+    { id: 'remainingDistance', label: 'Distancia restante', shortLabel: 'RESTA', format: stats => `${Math.max(0, (stats.totalDistance - stats.distance) / 1000).toFixed(1)} km` },
+    { id: 'elapsedTime', label: 'Tiempo', shortLabel: 'TIEMPO', format: stats => formatDuration(stats.elapsed) },
+    { id: 'remainingTime', label: 'Tiempo restante', shortLabel: 'QUEDA', format: stats => formatDuration(Math.max(0, stats.totalTime - stats.elapsed)) },
+    { id: 'currentSpeed', label: 'Velocidad ahora', shortLabel: 'VEL.', format: stats => `${stats.currentSpeed.toFixed(1)} km/h` },
+    { id: 'avgSpeed', label: 'Velocidad media', shortLabel: 'MEDIA', format: stats => `${stats.avgSpeed.toFixed(1)} km/h` },
+    { id: 'currentPace', label: 'Ritmo ahora', shortLabel: 'RITMO', format: stats => formatPace(stats.currentSpeed) },
+    { id: 'avgPace', label: 'Ritmo medio', shortLabel: 'RIT. MEDIO', format: stats => formatPace(stats.avgSpeed) },
+    { id: 'altitude', label: 'Altitud', shortLabel: 'ALT.', format: stats => stats.elevation == null ? '-- m' : `${Math.round(stats.elevation)} m` },
+    { id: 'elevationGain', label: 'Desnivel +', shortLabel: 'DESNIVEL', format: stats => `+${Math.round(stats.elevationGain)} m` },
+    { id: 'grade', label: 'Pendiente', shortLabel: 'PEND.', format: stats => Number.isFinite(stats.grade) ? `${stats.grade.toFixed(1)}%` : '--%' },
+    { id: 'progress', label: 'Progreso', shortLabel: 'PROG.', format: stats => `${Math.round(stats.progress * 100)}%` },
+    { id: 'trackTime', label: 'Hora GPX', shortLabel: 'HORA', format: stats => formatClock(stats.point?.time) },
+    { id: 'coordinates', label: 'Coordenadas', shortLabel: 'GPS', format: stats => `${stats.point.lat.toFixed(4)}, ${stats.point.lon.toFixed(4)}` }
+];
+
+function getElementValue(id, fallback = '') {
+    const element = document.getElementById(id);
+    return element ? element.value : fallback;
+}
+
+function setElementValue(id, value) {
+    const element = document.getElementById(id);
+    if (!element || value == null) return;
+    element.value = value;
+}
+
+function setElementChecked(id, value) {
+    const element = document.getElementById(id);
+    if (!element || value == null) return;
+    element.checked = Boolean(value);
+}
+
+function getStoredSettings() {
+    try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {};
+    } catch (err) {
+        console.warn('No se pudo leer la configuración guardada', err);
+        return {};
+    }
+}
+
+function sanitizeStoredTexts(texts) {
+    if (!Array.isArray(texts)) return [];
+    return texts
+        .filter(text => text && (text.type === 'metric' || text.type === 'text'))
+        .map(text => ({
+            id: String(text.id || Date.now().toString(36)),
+            type: text.type === 'metric' ? 'metric' : 'text',
+            content: String(text.content || ''),
+            metric: getMetricDefinition(text.metric).id,
+            x: Math.max(0, Math.min(100, Number(text.x) || 50)),
+            y: Math.max(0, Math.min(100, Number(text.y) || 50)),
+            size: Math.max(12, Math.min(120, Number(text.size) || 36)),
+            color: /^#[0-9a-f]{6}$/i.test(text.color || '') ? text.color : '#ffffff',
+            font: String(text.font || 'Inter')
+        }));
+}
+
+function collectSettingsForStorage() {
+    return {
+        mapStyle: getElementValue('map-selector', currentMapStyle),
+        routeIcon: getElementValue('route-icon', '🚴'),
+        routeColor: getElementValue('route-color', '#3b82f6'),
+        zoomLevel: getElementValue('zoom-level', '16'),
+        viewMode: is3D ? '3d' : '2d',
+        cameraMode,
+        motionMode,
+        terrainExaggeration,
+        title: getElementValue('input-title', 'MI RUTA'),
+        date: getElementValue('input-date', ''),
+        showHeader: document.getElementById('check-header')?.checked ?? true,
+        showKmFlags,
+        showTimeFlags,
+        kmFlagStep,
+        timeFlagStep,
+        ratio: getElementValue('input-ratio', '916'),
+        quality: getElementValue('input-quality', '720'),
+        duration: getElementValue('input-duration', '30'),
+        lineWidth: getElementValue('input-linewidth', '6'),
+        customTexts,
+        selectedTextId
+    };
+}
+
+function saveSettings() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(collectSettingsForStorage()));
+    } catch (err) {
+        console.warn('No se pudo guardar la configuración', err);
+    }
+}
+
+function restoreSettings() {
+    const settings = getStoredSettings();
+    if (!Object.keys(settings).length) return;
+
+    setElementValue('map-selector', settings.mapStyle);
+    setElementValue('wizard-map-selector', settings.mapStyle);
+    setElementValue('route-icon', settings.routeIcon);
+    setElementValue('wizard-route-icon', settings.routeIcon);
+    setElementValue('route-color', settings.routeColor);
+    setElementValue('wizard-route-color', settings.routeColor);
+    setElementValue('zoom-level', settings.zoomLevel);
+    setElementValue('input-view-mode', settings.viewMode);
+    setElementValue('camera-mode', settings.cameraMode);
+    setElementValue('motion-mode', settings.motionMode);
+    setElementValue('terrain-exaggeration', settings.terrainExaggeration);
+    setElementValue('input-title', settings.title);
+    setElementValue('input-date', settings.date);
+    setElementChecked('check-header', settings.showHeader);
+    setElementChecked('check-km-flags', settings.showKmFlags);
+    setElementChecked('check-time-flags', settings.showTimeFlags);
+    setElementValue('km-flag-step', settings.kmFlagStep);
+    setElementValue('time-flag-step', settings.timeFlagStep);
+    setElementValue('input-ratio', settings.ratio);
+    setElementValue('input-quality', settings.quality);
+    setElementValue('input-duration', settings.duration);
+    setElementValue('input-linewidth', settings.lineWidth);
+
+    currentMapStyle = 'satellite';
+    is3D = settings.viewMode ? settings.viewMode === '3d' : is3D;
+    cameraMode = settings.cameraMode || cameraMode;
+    motionMode = settings.motionMode || motionMode;
+    terrainExaggeration = parseFloat(settings.terrainExaggeration) || terrainExaggeration;
+    showKmFlags = Boolean(settings.showKmFlags);
+    showTimeFlags = Boolean(settings.showTimeFlags);
+    kmFlagStep = parseFloat(settings.kmFlagStep) || kmFlagStep;
+    timeFlagStep = parseFloat(settings.timeFlagStep) || timeFlagStep;
+    customTexts = sanitizeStoredTexts(settings.customTexts);
+    selectedTextId = customTexts.some(text => text.id === settings.selectedTextId)
+        ? settings.selectedTextId
+        : customTexts[0]?.id || null;
+}
 
 const mapTileUrls = {
     dark:     "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
@@ -47,6 +187,7 @@ function initMap() {
         container: 'map',
         style: {
             "version": 8,
+            "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
             "sources": {
                 "raster-tiles": {
                     "type": "raster",
@@ -70,11 +211,16 @@ function initMap() {
         antialias: true
     });
 
-    map.on('load', setupMapLayers);
+    map.on('load', () => {
+        setupMapLayers();
+        const savedStyle = getElementValue('map-selector', currentMapStyle);
+        if (savedStyle && savedStyle !== currentMapStyle) setMapStyle(savedStyle);
+    });
     map.on('style.load', setupMapLayers);
 
     document.getElementById('zoom-level').addEventListener('input', () => {
         if (points.length) updatePosition(currentIndex);
+        saveSettings();
     });
 }
 
@@ -246,6 +392,7 @@ function setMapStyle(styleId) {
     if (!map || !mapTileUrls[styleId]) return;
     if (currentMapStyle === styleId) return pendingStylePromise;
     const style = map.getStyle();
+    style.glyphs = style.glyphs || "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf";
     style.sources['raster-tiles'].tiles = [mapTileUrls[styleId]];
     pendingStylePromise = new Promise((resolve) => {
         let done = false;
@@ -265,27 +412,37 @@ function setMapStyle(styleId) {
 document.getElementById('map-selector').addEventListener('change', (e) => {
     document.getElementById('wizard-map-selector').value = e.target.value;
     setMapStyle(e.target.value);
+    saveSettings();
 });
 
 // Customization
 document.getElementById('route-color').addEventListener('input', (e) => {
     if (map.getLayer('route-line')) map.setPaintProperty('route-line', 'line-color', e.target.value);
+    document.getElementById('wizard-route-color').value = e.target.value;
+    saveSettings();
 });
-document.getElementById('route-icon').addEventListener('input', updateMarkerIcon);
+document.getElementById('route-icon').addEventListener('input', (e) => {
+    document.getElementById('wizard-route-icon').value = e.target.value;
+    updateMarkerIcon();
+    saveSettings();
+});
 document.getElementById('toggle-3d').addEventListener('click', (e) => {
     is3D = !is3D;
     e.currentTarget.classList.toggle('bg-blue-600', is3D);
     document.getElementById('input-view-mode').value = is3D ? '3d' : '2d';
     setupTerrainLayers();
     applyTerrainMode();
+    saveSettings();
 });
 document.getElementById('toggle-follow').addEventListener('click', (e) => {
     followCamera = !followCamera;
     e.currentTarget.classList.toggle('bg-blue-600', followCamera);
+    saveSettings();
 });
 document.getElementById('toggle-chase').addEventListener('click', () => {
     cameraMode = cameraMode === 'chase' ? 'center' : 'chase';
     updateCameraModeUi();
+    saveSettings();
 });
 
 // GPX Handling
@@ -380,8 +537,8 @@ function processTrack(track) {
     document.getElementById('stat-ele').innerText = Math.round(track.elevation.pos || 0) + " M Δ";
     document.getElementById('timeline').max = 1000;
 
-    document.getElementById('input-date').value = formatDate(points[0].time);
-    document.getElementById('input-title').value = "MI RUTA";
+    if (!document.getElementById('input-date').value) document.getElementById('input-date').value = formatDate(points[0].time);
+    if (!document.getElementById('input-title').value) document.getElementById('input-title').value = "MI RUTA";
     syncWizardFromToolbar();
     setPreviewProgress(0);
     updateExportFrameGuide();
@@ -445,6 +602,7 @@ function applyWizardSettings() {
     }
 
     updatePreviewOverlay();
+    saveSettings();
     return styleReady;
 }
 
@@ -459,6 +617,7 @@ function showPreview() {
     updateExportFrameGuide();
     setPreviewProgress(previewProgress);
     updatePreviewOverlay();
+    updateExportControls();
 }
 
 function updatePreviewOverlay() {
@@ -466,21 +625,22 @@ function updatePreviewOverlay() {
     const dateStr = document.getElementById('input-date').value || '';
     const color = document.getElementById('route-color').value;
     const showHeader = document.getElementById('check-header').checked;
-    const showStats = document.getElementById('check-stats').checked;
 
     document.getElementById('overlay-title').innerText = title.toUpperCase();
     document.getElementById('overlay-date').innerText = dateStr.toUpperCase();
     document.getElementById('overlay-date').style.color = color;
     document.getElementById('overlay-title').parentElement.classList.toggle('hidden', !showHeader);
-    document.getElementById('overlay-dist').closest('.flex.justify-between').classList.toggle('hidden', !showStats);
+    document.getElementById('overlay-dist').closest('.flex.justify-between').classList.add('hidden');
 
     if (points.length) setPreviewProgress(previewProgress);
     renderCustomTexts();
+    updateExportControls();
 }
 
 function addCustomText() {
     const text = {
         id: Date.now().toString(36),
+        type: 'text',
         content: 'Tu texto',
         x: 50,
         y: 50,
@@ -493,27 +653,94 @@ function addCustomText() {
     document.getElementById('text-controls').classList.remove('hidden');
     renderCustomTexts();
     syncTextControls();
+    saveSettings();
+}
+
+function addMetricText() {
+    const text = {
+        id: Date.now().toString(36),
+        type: 'metric',
+        metric: 'currentSpeed',
+        x: 50,
+        y: 62,
+        size: 36,
+        color: '#ffffff',
+        font: 'Inter'
+    };
+    customTexts.push(text);
+    selectedTextId = text.id;
+    document.getElementById('text-controls').classList.remove('hidden');
+    renderCustomTexts();
+    syncTextControls();
+    saveSettings();
 }
 
 function getSelectedText() {
     return customTexts.find(t => t.id === selectedTextId) || null;
 }
 
+function getMetricDefinition(metricId) {
+    return metricCatalog.find(metric => metric.id === metricId) || metricCatalog[0];
+}
+
+function getCustomTextDisplay(text, index = currentIndex, point = currentOverlayPoint, progress = previewProgress) {
+    if (text.type !== 'metric') {
+        return {
+            label: '',
+            value: text.content || '',
+            canvasLines: String(text.content || '').split('\n')
+        };
+    }
+
+    const metric = getMetricDefinition(text.metric);
+    const stats = getCurrentStats(index, point, progress);
+    const value = metric.format(stats);
+    return {
+        label: metric.shortLabel,
+        value,
+        canvasLines: [metric.shortLabel, value]
+    };
+}
+
 function renderCustomTexts() {
     const layer = document.getElementById('custom-text-layer');
     layer.innerHTML = '';
     customTexts.forEach(text => {
+        const display = getCustomTextDisplay(text);
         const el = document.createElement('div');
-        el.className = `custom-text-overlay ${text.id === selectedTextId ? 'selected' : ''}`;
+        el.className = `custom-text-overlay ${text.type === 'metric' ? 'metric' : ''} ${text.id === selectedTextId ? 'selected' : ''}`;
         el.dataset.id = text.id;
-        el.textContent = text.content;
+        el.dataset.type = text.type || 'text';
         el.style.left = `${text.x}%`;
         el.style.top = `${text.y}%`;
         el.style.fontSize = `${text.size}px`;
         el.style.color = text.color;
         el.style.fontFamily = text.font;
+        if (text.type === 'metric') {
+            const label = document.createElement('span');
+            label.className = 'metric-label';
+            label.textContent = display.label;
+            const value = document.createElement('span');
+            value.className = 'metric-value';
+            value.textContent = display.value;
+            el.append(label, value);
+        } else {
+            el.textContent = display.value;
+        }
         el.addEventListener('pointerdown', startTextDrag);
         layer.appendChild(el);
+    });
+}
+
+function updateCustomMetricValues(index = currentIndex, point = currentOverlayPoint, progress = previewProgress) {
+    document.querySelectorAll('.custom-text-overlay[data-type="metric"]').forEach(el => {
+        const text = customTexts.find(item => item.id === el.dataset.id);
+        if (!text) return;
+        const display = getCustomTextDisplay(text, index, point, progress);
+        const label = el.querySelector('.metric-label');
+        const value = el.querySelector('.metric-value');
+        if (label) label.textContent = display.label;
+        if (value) value.textContent = display.value;
     });
 }
 
@@ -536,6 +763,7 @@ function startTextDrag(e) {
     const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        saveSettings();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -545,10 +773,14 @@ function syncTextControls() {
     const text = getSelectedText();
     document.getElementById('text-controls').classList.toggle('hidden', !text);
     if (!text) return;
-    document.getElementById('text-content').value = text.content;
+    const isMetric = text.type === 'metric';
+    document.getElementById('text-content').classList.toggle('hidden', isMetric);
+    document.getElementById('metric-controls').classList.toggle('hidden', !isMetric);
+    document.getElementById('text-content').value = text.content || '';
     document.getElementById('text-size').value = text.size;
     document.getElementById('text-color').value = text.color;
     document.getElementById('text-font').value = text.font;
+    document.getElementById('metric-type').value = text.metric || metricCatalog[0].id;
 }
 
 function updateSelectedText(patch) {
@@ -556,6 +788,7 @@ function updateSelectedText(patch) {
     if (!text) return;
     Object.assign(text, patch);
     renderCustomTexts();
+    saveSettings();
 }
 
 function getExportSize() {
@@ -575,6 +808,105 @@ function getExportSize() {
 
 function getPreviewDurationSeconds() {
     return Math.max(1, parseInt(document.getElementById('input-duration').value) || 30);
+}
+
+function getExportFrameRate() {
+    const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    return isiOS ? 24 : 30;
+}
+
+function waitForMapRenderFrame(timeoutMs = 220) {
+    if (!map) return Promise.resolve();
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            map.off('render', finish);
+            resolve();
+        };
+        const timeout = setTimeout(finish, timeoutMs);
+        map.once('render', finish);
+        if (map.triggerRepaint) map.triggerRepaint();
+    });
+}
+
+function waitUntil(targetTime) {
+    const delay = targetTime - performance.now();
+    if (delay <= 0) return Promise.resolve();
+    return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+function createRecordStream(canvas, fps) {
+    try {
+        const stream = canvas.captureStream(0);
+        const track = stream.getVideoTracks()[0];
+        if (track && typeof track.requestFrame === 'function') {
+            return { stream, track, manualFrames: true };
+        }
+        stream.getTracks().forEach(candidate => candidate.stop());
+    } catch (err) {
+        console.warn('Canvas manual frame capture no disponible, usando FPS fijo', err);
+    }
+
+    const stream = canvas.captureStream(fps);
+    const track = stream.getVideoTracks()[0] || null;
+    return { stream, track, manualFrames: false };
+}
+
+function composeRecordFrame(ctx, recordSize, sourceCanvas, position, progress, options) {
+    const { w: rW, h: rH } = recordSize;
+    const mapCanvas = sourceCanvas || map.getCanvas();
+    const mW = mapCanvas.width;
+    const mH = mapCanvas.height;
+    const tA = rW / rH;
+    const mA = mW / mH;
+    let sx, sy, sw, sh;
+
+    if (mA > tA) {
+        sh = mH;
+        sw = Math.round(mH * tA);
+        sx = Math.round((mW - sw) / 2);
+        sy = 0;
+    } else {
+        sw = mW;
+        sh = Math.round(mW / tA);
+        sx = 0;
+        sy = Math.round((mH - sh) / 2);
+    }
+
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, rW, rH);
+    ctx.drawImage(mapCanvas, sx, sy, sw, sh, 0, 0, rW, rH);
+
+    const dpr = mW / Math.max(1, mapCanvas.clientWidth || mW);
+    const markerPoint = position.point || points[currentIndex];
+    const projected = map.project([markerPoint.lon, markerPoint.lat]);
+    const mx = (projected.x * dpr - sx) * (rW / sw);
+    const my = (projected.y * dpr - sy) * (rH / sh);
+
+    ctx.font = `${Math.floor(rW * 0.08)}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(options.emoji, mx, my);
+
+    drawProOverlayLegacy(
+        ctx,
+        rW,
+        rH,
+        options.title,
+        options.dateStr,
+        options.color,
+        currentIndex,
+        options.showHeader,
+        options.showStats,
+        options.showElevation,
+        options.showProgress,
+        progress,
+        position.point
+    );
+    drawCustomTextsOnCanvas(ctx, rW, rH, progress, position.point);
 }
 
 function updateExportFrameGuide() {
@@ -800,6 +1132,7 @@ function setPreviewProgress(progress) {
 function updatePosition(index, virtualPoint = null) {
     if (!points[index]) return;
     const p = virtualPoint || points[index];
+    currentOverlayPoint = p;
     marker.setLngLat([p.lon, p.lat]);
     if (routePrefixIndex !== index) {
         routePrefixCoordinates = routeCoordinates.slice(0, index + 1);
@@ -822,11 +1155,78 @@ function updatePosition(index, virtualPoint = null) {
         document.getElementById('overlay-dist').innerText = (currentDistance / 1000).toFixed(1) + " KM";
         if (elapsed > 0) document.getElementById('overlay-speed').innerText = ((currentDistance / 1000) / (elapsed / 3600)).toFixed(1) + " KM/H";
     }
+    updateCustomMetricValues(index, p, previewProgress);
     updateVisibleRouteFlags(currentDistance, elapsed);
 }
 
 function getDistanceAtPosition(index, virtualPoint) {
     return (routeDistances[index] || 0) + calculatePartialDistance(index, virtualPoint);
+}
+
+function getCurrentStats(index = currentIndex, point = currentOverlayPoint, progress = previewProgress) {
+    const safeIndex = Math.max(0, Math.min(points.length - 1, index || 0));
+    const safePoint = point || points[safeIndex] || points[0] || { lat: 0, lon: 0 };
+    const distance = getDistanceAtPosition(safeIndex, safePoint);
+    const elapsed = getElapsedSecondsAtPoint(safePoint);
+    const totalTime = getTotalTrackSeconds();
+    const currentSpeed = getInstantSpeedKmh(safeIndex);
+    const avgSpeed = elapsed > 0 ? (distance / 1000) / (elapsed / 3600) : 0;
+
+    return {
+        index: safeIndex,
+        point: safePoint,
+        distance,
+        totalDistance: totalRouteDistance,
+        elapsed,
+        totalTime,
+        currentSpeed: Number.isFinite(currentSpeed) ? currentSpeed : avgSpeed,
+        avgSpeed: Number.isFinite(avgSpeed) ? avgSpeed : 0,
+        elevation: safePoint.ele,
+        elevationGain: calculateElevationGainAtPosition(safeIndex, safePoint),
+        grade: getSegmentGrade(safeIndex),
+        progress: Math.max(0, Math.min(1, progress))
+    };
+}
+
+function getElapsedSecondsAtPoint(point) {
+    if (!points.length || !point?.time) return 0;
+    const start = new Date(points[0].time).getTime();
+    const current = new Date(point.time).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(current)) return 0;
+    return Math.max(0, (current - start) / 1000);
+}
+
+function getTotalTrackSeconds() {
+    if (points.length < 2) return 0;
+    const start = new Date(points[0].time).getTime();
+    const end = new Date(points[points.length - 1].time).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+    return (end - start) / 1000;
+}
+
+function getInstantSpeedKmh(index) {
+    if (points.length < 2) return 0;
+    const a = points[Math.max(0, Math.min(points.length - 2, index))];
+    const b = points[Math.max(1, Math.min(points.length - 1, index + 1))];
+    const dt = (new Date(b.time).getTime() - new Date(a.time).getTime()) / 1000;
+    if (!Number.isFinite(dt) || dt <= 0) return 0;
+    return (distanceBetween(a, b) / 1000) / (dt / 3600);
+}
+
+function getSegmentGrade(index) {
+    if (points.length < 2) return 0;
+    const a = points[Math.max(0, Math.min(points.length - 2, index))];
+    const b = points[Math.max(1, Math.min(points.length - 1, index + 1))];
+    if (a.ele == null || b.ele == null) return NaN;
+    const distance = distanceBetween(a, b);
+    if (distance <= 0) return NaN;
+    return ((b.ele - a.ele) / distance) * 100;
+}
+
+function calculateElevationGainAtPosition(index, virtualPoint) {
+    const baseGain = calculateElevationGain(0, index);
+    if (!virtualPoint || index >= points.length - 1 || points[index]?.ele == null || virtualPoint.ele == null) return baseGain;
+    return baseGain + Math.max(0, virtualPoint.ele - points[index].ele);
 }
 
 function updateFollowCamera(point, index) {
@@ -837,16 +1237,16 @@ function updateFollowCamera(point, index) {
         return;
     }
 
-    const lookAheadStep = Math.max(18, Math.round(points.length * 0.035));
-    const lookAheadIndex = Math.min(points.length - 1, index + lookAheadStep);
-    const lookAhead = points[lookAheadIndex] || point;
-    const targetBearing = calculateStableBearing(index, lookAheadStep, point);
+    const currentDistance = getDistanceAtPosition(index, point);
+    const lookAheadMeters = Math.max(80, Math.min(650, totalRouteDistance * 0.045));
+    const lookAhead = getPointAtDistance(Math.min(totalRouteDistance, currentDistance + lookAheadMeters))?.point || points[Math.min(points.length - 1, index + 1)] || point;
+    const targetBearing = calculateStableBearing(index, lookAheadMeters, point, currentDistance);
     const bearingDelta = smoothedBearing == null ? 180 : Math.abs(shortestBearingDelta(smoothedBearing, targetBearing));
-    if (smoothedBearing == null || bearingDelta > 5) {
-        smoothedBearing = smoothBearing(smoothedBearing, targetBearing, 0.025);
+    if (smoothedBearing == null || bearingDelta > 3) {
+        smoothedBearing = smoothBearing(smoothedBearing, targetBearing, 0.04);
     }
 
-    const center = interpolateGeoPoint(point, lookAhead, 0.34);
+    const center = interpolateGeoPoint(point, lookAhead, 0.3);
     map.jumpTo({
         center: [center.lon, center.lat],
         zoom: Math.max(3, zoom - 0.25),
@@ -855,15 +1255,38 @@ function updateFollowCamera(point, index) {
     });
 }
 
-function calculateStableBearing(index, lookAheadStep, currentPoint) {
+function calculateStableBearing(index, lookAheadMeters, currentPoint, currentDistance = null) {
+    if (totalRouteDistance > 0) {
+        const distance = currentDistance ?? getDistanceAtPosition(index, currentPoint);
+        const behindDistance = Math.max(0, distance - Math.max(40, lookAheadMeters * 0.45));
+        const behind = getPointAtDistance(behindDistance)?.point || currentPoint;
+        const samples = [];
+
+        [0.55, 0.85, 1.15].forEach(mult => {
+            const aheadDistance = Math.min(totalRouteDistance, distance + lookAheadMeters * mult);
+            const ahead = getPointAtDistance(aheadDistance)?.point || currentPoint;
+            const from = distanceBetween(currentPoint, ahead) > 4 ? currentPoint : behind;
+            if (distanceBetween(from, ahead) > 4) samples.push(calculateBearing(from, ahead));
+        });
+
+        if (samples.length) return averageBearings(samples);
+    }
+
     const samples = [];
     const start = currentPoint || points[index];
+    const lookAheadStep = Math.max(18, Math.round(points.length * 0.035));
     [0.45, 0.7, 1].forEach(mult => {
         const sampleIndex = Math.min(points.length - 1, index + Math.max(2, Math.round(lookAheadStep * mult)));
         const sample = points[sampleIndex];
-        if (sample && sample !== start) samples.push(calculateBearing(start, sample));
+        if (sample && distanceBetween(start, sample) > 4) samples.push(calculateBearing(start, sample));
     });
-    return averageBearings(samples.length ? samples : [calculateBearing(start, points[Math.min(points.length - 1, index + 1)] || start)]);
+    if (samples.length) return averageBearings(samples);
+
+    const previous = points[Math.max(0, index - 1)] || start;
+    const next = points[Math.min(points.length - 1, index + 1)] || start;
+    if (distanceBetween(previous, start) > 4) return calculateBearing(previous, start);
+    if (distanceBetween(start, next) > 4) return calculateBearing(start, next);
+    return smoothedBearing ?? 0;
 }
 
 function averageBearings(bearings) {
@@ -942,18 +1365,28 @@ function preloadMapTiles(zoomLevel) {
 }
 
 // EXPORT ENGINE
-document.getElementById('btn-start-record').addEventListener('click', async () => {
+async function startRecordingVideo() {
     if (!points.length) return alert("Carga un archivo GPX primero");
-    await applyWizardSettings();
+    if (!previewMode) return alert("Primero revisa la preview antes de exportar.");
+    if (exportInProgress) return;
+    exportInProgress = true;
+    try {
+        await applyWizardSettings();
+    } catch (err) {
+        console.error(err);
+        exportInProgress = false;
+        alert("No se pudo preparar la exportación.");
+        return;
+    }
 
     const title        = document.getElementById('input-title').value;
     const dateStr      = document.getElementById('input-date').value;
     const color        = document.getElementById('route-color').value;
     const duration     = parseInt(document.getElementById('input-duration').value) || 30;
     const showHeader   = document.getElementById('check-header').checked;
-    const showStats    = document.getElementById('check-stats').checked;
-    const showElevation= document.getElementById('check-elevation').checked;
-    const showProgress = document.getElementById('check-progress').checked;
+    const showStats    = false;
+    const showElevation= false;
+    const showProgress = false;
     const lineWidth    = parseInt(document.getElementById('input-linewidth').value) || 6;
     const zoomLevel    = parseFloat(document.getElementById('zoom-level').value);
 
@@ -974,14 +1407,24 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     const recordCanvas = document.createElement('canvas');
     recordCanvas.width = rW; recordCanvas.height = rH;
     const rctx = recordCanvas.getContext('2d');
+    const fps = getExportFrameRate();
+    const capture = createRecordStream(recordCanvas, fps);
 
     const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
     const selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m));
-    if (!selectedMime) { document.getElementById('loader').classList.add('hidden'); return alert("Tu navegador no soporta grabación de video."); }
+    if (!selectedMime) {
+        document.getElementById('loader').classList.add('hidden');
+        exportInProgress = false;
+        return alert("Tu navegador no soporta grabación de video.");
+    }
 
     let recorder, chunks = [];
-    try { recorder = new MediaRecorder(recordCanvas.captureStream(30), { mimeType: selectedMime, videoBitsPerSecond: 10000000 }); }
-    catch (e) { document.getElementById('loader').classList.add('hidden'); return alert("Error: " + e.message); }
+    try { recorder = new MediaRecorder(capture.stream, { mimeType: selectedMime, videoBitsPerSecond: 10000000 }); }
+    catch (e) {
+        document.getElementById('loader').classList.add('hidden');
+        exportInProgress = false;
+        return alert("Error: " + e.message);
+    }
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
     // 3. La duración configurada es la duración total real del vídeo.
@@ -989,67 +1432,61 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
     followCamera = true;
     smoothedBearing = null;
 
-    // 4. RENDER continuo: 0% → 100% dentro de duration.
-    const TOTAL_MS = duration * 1000;
-    let recordT0 = null, recording = true;
+    // 4. RENDER estable: frame a frame, esperando a que MapLibre pinte cada cambio.
+    const totalFrames = Math.max(2, Math.round(duration * fps));
+    const frameMs = 1000 / fps;
+    let recording = true;
+    let frameNumber = 0;
+    let captureStartTime = 0;
     const emoji = document.getElementById('route-icon').value || "🚴";
+    const recordOptions = {
+        title,
+        dateStr,
+        color,
+        showHeader,
+        showStats,
+        showElevation,
+        showProgress,
+        emoji
+    };
 
     // Posición inicial
     setPreviewProgress(0);
     map.jumpTo({ center: [points[0].lon, points[0].lat], zoom: zoomLevel - 1.5 });
+    await waitForMapRenderFrame(500);
 
     // 5. RENDER LOOP
-    const renderLoop = (ts) => {
+    const renderLoop = async () => {
         if (!recording) return;
-        if (recordT0 === null) recordT0 = ts;
-        const elapsedMs = Math.min(ts - recordT0, TOTAL_MS);
-        const progress = TOTAL_MS > 0 ? elapsedMs / TOTAL_MS : 1;
+        const progress = frameNumber / (totalFrames - 1);
         const position = getInterpolatedPosition(progress);
         currentIndex = progress >= 1 ? points.length - 1 : position.index;
         updatePosition(currentIndex, position.point);
+        await waitForMapRenderFrame(frameNumber === totalFrames - 1 ? 500 : 220);
 
-        // — Composición de frame —
-        const mapCanvas = map.getCanvas();
-        const mW = mapCanvas.width, mH = mapCanvas.height;
-        const tA = rW / rH, mA = mW / mH;
-        let sx, sy, sw, sh;
-        if (mA > tA) { sh = mH; sw = Math.round(mH * tA); sx = Math.round((mW - sw) / 2); sy = 0; }
-        else         { sw = mW; sh = Math.round(mW / tA); sx = 0; sy = Math.round((mH - sh) / 2); }
+        composeRecordFrame(rctx, { w: rW, h: rH }, map.getCanvas(), position, progress, recordOptions);
+        if (capture.manualFrames) capture.track.requestFrame();
 
-        rctx.fillStyle = '#020617';
-        rctx.fillRect(0, 0, rW, rH);
-        rctx.drawImage(mapCanvas, sx, sy, sw, sh, 0, 0, rW, rH);
-
-        // — Marcador —
-        const dpr = mW / mapCanvas.clientWidth;
-        const idx = currentIndex;
-        const markerPoint = position.point || points[idx];
-        const pos = map.project([markerPoint.lon, markerPoint.lat]);
-        const mx = (pos.x * dpr - sx) * (rW / sw), my = (pos.y * dpr - sy) * (rH / sh);
-        rctx.font = `${Math.floor(rW * 0.08)}px serif`;
-        rctx.textAlign = 'center'; rctx.textBaseline = 'middle';
-        rctx.fillText(emoji, mx, my);
-
-        // — Overlay —
-        drawProOverlayLegacy(rctx, rW, rH, title, dateStr, color, idx, showHeader, showStats, showElevation, showProgress, progress);
-        drawCustomTextsOnCanvas(rctx, rW, rH);
-
-        if (elapsedMs >= TOTAL_MS) {
+        if (frameNumber >= totalFrames - 1) {
             recording = false;
-            setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 200);
+            setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, Math.max(250, frameMs * 3));
             return;
         }
+
+        frameNumber += 1;
+        if (captureStartTime) await waitUntil(captureStartTime + frameNumber * frameMs);
         requestAnimationFrame(renderLoop);
     };
 
     // 6. PROGRESO en loader
     const checkDone = setInterval(() => {
         if (!recording) { clearInterval(checkDone); return; }
-        document.getElementById('loader-text').innerText = `GRABANDO: ${Math.round((currentIndex / (points.length - 1)) * 100)}%`;
+        document.getElementById('loader-text').innerText = `GRABANDO: ${Math.round((frameNumber / (totalFrames - 1)) * 100)}%`;
     }, 200);
 
     function cleanup() {
         clearInterval(checkDone);
+        capture.track?.stop?.();
         followCamera = originalFollowCamera;
         pause();
         setPreviewProgress(0);
@@ -1059,6 +1496,7 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
             document.getElementById('export-frame-guide').classList.remove('hidden');
             updateExportFrameGuide();
         }
+        exportInProgress = false;
     }
 
     recorder.onstop = () => {
@@ -1074,11 +1512,15 @@ document.getElementById('btn-start-record').addEventListener('click', async () =
         document.getElementById('modal-video-ready').classList.remove('hidden');
     };
 
-    try { recorder.start(); requestAnimationFrame(renderLoop); }
+    try {
+        recorder.start(1000);
+        captureStartTime = performance.now();
+        requestAnimationFrame(renderLoop);
+    }
     catch (e) { alert("Error al iniciar grabación: " + e.message); cleanup(); }
-});
+}
 
-function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats, showElevation, showProgressBar, smoothProgress = null) {
+function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, showStats, showElevation, showProgressBar, smoothProgress = null, virtualPoint = null) {
     const padding = w * 0.1;
 
     if (showHeader) {
@@ -1098,8 +1540,9 @@ function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, 
         g2.addColorStop(0, 'transparent'); g2.addColorStop(1, 'rgba(2,6,23,0.9)');
         ctx.fillStyle = g2; ctx.fillRect(0, h * 0.75, w, h * 0.25);
 
-        const dist = calculateDistance(0, index);
-        const elapsed = (new Date(points[index].time) - new Date(points[0].time)) / 1000;
+        const pointForStats = virtualPoint || points[index];
+        const dist = getDistanceAtPosition(index, virtualPoint);
+        const elapsed = (new Date(pointForStats.time) - new Date(points[0].time)) / 1000;
         const speed = elapsed > 0 ? (dist / 1000) / (elapsed / 3600) : 0;
         const labelSize = Math.floor(w * 0.022);
         const valueSize = Math.floor(w * 0.06);
@@ -1147,28 +1590,72 @@ function drawProOverlayLegacy(ctx, w, h, title, date, color, index, showHeader, 
     }
 }
 
-function drawCustomTextsOnCanvas(ctx, w, h) {
+function drawCustomTextsOnCanvas(ctx, w, h, progress = previewProgress, point = currentOverlayPoint) {
     const layerRect = document.getElementById('custom-text-layer').getBoundingClientRect();
     const baseWidth = previewFrameWidth || layerRect.width || window.innerWidth || w;
     const scale = w / baseWidth;
 
     customTexts.forEach(text => {
+        const display = getCustomTextDisplay(text, currentIndex, point, progress);
         const x = w * text.x / 100;
         const y = h * text.y / 100;
         const size = Math.max(12, Math.round(text.size * scale));
         ctx.save();
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.font = `900 ${size}px "${text.font}", sans-serif`;
         ctx.fillStyle = text.color;
         ctx.shadowColor = 'rgba(0,0,0,0.75)';
         ctx.shadowBlur = Math.round(size * 0.25);
         ctx.shadowOffsetY = Math.round(size * 0.08);
-        String(text.content || '').split('\n').forEach((line, i, lines) => {
-            ctx.fillText(line, x, y + (i - (lines.length - 1) / 2) * size * 1.15);
-        });
+
+        if (text.type === 'metric') {
+            const valueSize = size;
+            const labelSize = Math.max(8, Math.round(size * 0.34));
+            ctx.font = `900 ${valueSize}px "${text.font}", sans-serif`;
+            const valueWidth = ctx.measureText(display.value).width;
+            ctx.font = `800 ${labelSize}px "${text.font}", sans-serif`;
+            const labelWidth = ctx.measureText(display.label).width;
+            const boxW = Math.max(valueWidth, labelWidth) + size * 0.9;
+            const boxH = valueSize + labelSize + size * 0.55;
+            const radius = Math.max(8, Math.round(size * 0.25));
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(2, 6, 23, 0.72)';
+            roundRect(ctx, x - boxW / 2, y - boxH / 2, boxW, boxH, radius);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+            ctx.lineWidth = Math.max(1, Math.round(size * 0.03));
+            ctx.stroke();
+            ctx.shadowColor = 'rgba(0,0,0,0.75)';
+            ctx.shadowBlur = Math.round(size * 0.14);
+            ctx.fillStyle = text.color;
+            ctx.font = `900 ${valueSize}px "${text.font}", sans-serif`;
+            ctx.fillText(display.value, x, y + labelSize * 0.38);
+            ctx.fillStyle = 'rgba(226, 232, 240, 0.78)';
+            ctx.font = `800 ${labelSize}px "${text.font}", sans-serif`;
+            ctx.fillText(display.label, x, y - valueSize * 0.58);
+        } else {
+            ctx.font = `900 ${size}px "${text.font}", sans-serif`;
+            display.canvasLines.forEach((line, i, lines) => {
+                ctx.fillText(line, x, y + (i - (lines.length - 1) / 2) * size * 1.15);
+            });
+        }
         ctx.restore();
     });
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+    const safeRadius = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + safeRadius, y);
+    ctx.lineTo(x + width - safeRadius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+    ctx.lineTo(x + width, y + height - safeRadius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+    ctx.lineTo(x + safeRadius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+    ctx.lineTo(x, y + safeRadius);
+    ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+    ctx.closePath();
 }
 
 // Video share/download modal
@@ -1237,9 +1724,64 @@ function calculateElevationGain(f, t) {
     return gain;
 }
 function formatTime(s) { const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`; }
+function formatDuration(seconds) {
+    const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+    const h = Math.floor(safeSeconds / 3600);
+    const m = Math.floor((safeSeconds % 3600) / 60);
+    const s = safeSeconds % 60;
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function formatPace(speedKmh) {
+    if (!Number.isFinite(speedKmh) || speedKmh <= 0) return '-- /km';
+    const secondsPerKm = Math.round(3600 / speedKmh);
+    const m = Math.floor(secondsPerKm / 60);
+    const s = secondsPerKm % 60;
+    return `${m}:${String(s).padStart(2, '0')} /km`;
+}
+function formatClock(value) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '--:--';
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
 function formatDate(dt) { const d = new Date(dt), m = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]; return `${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()}`; }
 function closeModal() { document.getElementById('modal-record').classList.add('hidden'); }
 window.closeModal = closeModal;
+
+function populateMetricOptions() {
+    const select = document.getElementById('metric-type');
+    if (!select || select.options.length) return;
+    metricCatalog.forEach(metric => {
+        const option = document.createElement('option');
+        option.value = metric.id;
+        option.textContent = metric.label;
+        select.appendChild(option);
+    });
+}
+
+function updateExportControls() {
+    const exportButton = document.getElementById('btn-record-setup');
+    if (!exportButton) return;
+    exportButton.innerHTML = previewMode
+        ? '<i class="fas fa-clapperboard"></i> EXPORTAR VIDEO'
+        : '<i class="fas fa-eye"></i> VER PREVIEW';
+}
+
+async function showPreviewFromWizard() {
+    if (!points.length) return alert("Carga un GPX primero");
+    await applyWizardSettings();
+    showPreview();
+}
+
+function closeVideoReadyModal() {
+    document.getElementById('modal-video-ready').classList.add('hidden');
+    if (previewMode) {
+        document.getElementById('video-overlay').classList.remove('hidden');
+        document.getElementById('export-frame-guide').classList.remove('hidden');
+        document.getElementById('text-toolbar').classList.remove('hidden');
+        updateExportFrameGuide();
+        setPreviewProgress(previewProgress);
+    }
+}
 
 function animate(timestamp) {
     if (!isPlaying) return;
@@ -1281,7 +1823,14 @@ function pause() {
 }
 document.getElementById('btn-play').addEventListener('click', () => isPlaying ? pause() : play());
 document.getElementById('timeline').addEventListener('input', (e) => { pause(); setPreviewProgress(parseInt(e.target.value) / 1000); });
-document.getElementById('btn-record-setup').addEventListener('click', () => { if (!points.length) return alert("Carga un GPX primero"); document.getElementById('btn-start-record').click(); });
+document.getElementById('btn-record-setup').addEventListener('click', () => {
+    if (!points.length) return alert("Carga un GPX primero");
+    if (!previewMode) {
+        openWizard();
+        return;
+    }
+    startRecordingVideo();
+});
 document.getElementById('btn-restart').addEventListener('click', () => { pause(); smoothedBearing = null; setPreviewProgress(0); });
 document.getElementById('btn-loop').addEventListener('click', (e) => {
     loopEnabled = !loopEnabled;
@@ -1290,45 +1839,56 @@ document.getElementById('btn-loop').addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-config').addEventListener('click', openWizard);
-document.getElementById('btn-apply-wizard').addEventListener('click', async () => {
-    await applyWizardSettings();
-    showPreview();
-});
+document.getElementById('btn-apply-wizard').addEventListener('click', showPreviewFromWizard);
+document.getElementById('btn-start-record').addEventListener('click', showPreviewFromWizard);
 document.getElementById('wizard-map-selector').addEventListener('change', (e) => {
     document.getElementById('map-selector').value = e.target.value;
+    saveSettings();
 });
 document.getElementById('wizard-route-icon').addEventListener('input', (e) => {
     document.getElementById('route-icon').value = e.target.value;
     updateMarkerIcon();
+    saveSettings();
 });
 document.getElementById('wizard-route-color').addEventListener('input', (e) => {
     document.getElementById('route-color').value = e.target.value;
     if (map.getLayer('route-line')) map.setPaintProperty('route-line', 'line-color', e.target.value);
     updatePreviewOverlay();
+    saveSettings();
 });
 document.getElementById('input-view-mode').addEventListener('change', (e) => {
     is3D = e.target.value === '3d';
     document.getElementById('toggle-3d').classList.toggle('bg-blue-600', is3D);
     setupTerrainLayers();
     applyTerrainMode();
+    saveSettings();
 });
 document.getElementById('camera-mode').addEventListener('change', (e) => {
     cameraMode = e.target.value;
     updateCameraModeUi();
+    saveSettings();
 });
 document.getElementById('motion-mode').addEventListener('change', (e) => {
     motionMode = e.target.value;
     routePrefixIndex = -1;
     setPreviewProgress(previewProgress);
+    saveSettings();
 });
 document.getElementById('terrain-exaggeration').addEventListener('input', (e) => {
     terrainExaggeration = parseFloat(e.target.value) || 1.5;
     updateTerrainExaggerationLabel();
     if (is3D) applyTerrainMode(false);
+    saveSettings();
 });
-['input-title', 'input-date', 'check-header', 'check-stats', 'check-elevation', 'check-progress'].forEach(id => {
-    document.getElementById(id).addEventListener('input', updatePreviewOverlay);
-    document.getElementById(id).addEventListener('change', updatePreviewOverlay);
+['input-title', 'input-date', 'check-header'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+        updatePreviewOverlay();
+        saveSettings();
+    });
+    document.getElementById(id).addEventListener('change', () => {
+        updatePreviewOverlay();
+        saveSettings();
+    });
 });
 ['check-km-flags', 'check-time-flags', 'km-flag-step', 'time-flag-step'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => {
@@ -1338,6 +1898,7 @@ document.getElementById('terrain-exaggeration').addEventListener('input', (e) =>
         timeFlagStep = parseFloat(document.getElementById('time-flag-step').value) || 10;
         updateRouteFlags();
         setPreviewProgress(previewProgress);
+        saveSettings();
     });
     document.getElementById(id).addEventListener('change', () => {
         showKmFlags = document.getElementById('check-km-flags').checked;
@@ -1346,19 +1907,23 @@ document.getElementById('terrain-exaggeration').addEventListener('input', (e) =>
         timeFlagStep = parseFloat(document.getElementById('time-flag-step').value) || 10;
         updateRouteFlags();
         setPreviewProgress(previewProgress);
+        saveSettings();
     });
 });
-['input-ratio', 'input-quality', 'input-duration'].forEach(id => {
+['input-ratio', 'input-quality', 'input-duration', 'input-linewidth'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => {
         updateExportFrameGuide();
         setPreviewProgress(previewProgress);
+        saveSettings();
     });
     document.getElementById(id).addEventListener('change', () => {
         updateExportFrameGuide();
         setPreviewProgress(previewProgress);
+        saveSettings();
     });
 });
 document.getElementById('btn-add-text').addEventListener('click', addCustomText);
+document.getElementById('btn-add-metric').addEventListener('click', addMetricText);
 document.getElementById('btn-hide-text-panel').addEventListener('click', () => {
     document.getElementById('text-toolbar').classList.toggle('collapsed');
 });
@@ -1366,12 +1931,17 @@ document.getElementById('text-content').addEventListener('input', (e) => updateS
 document.getElementById('text-size').addEventListener('input', (e) => updateSelectedText({ size: parseInt(e.target.value) || 42 }));
 document.getElementById('text-color').addEventListener('input', (e) => updateSelectedText({ color: e.target.value }));
 document.getElementById('text-font').addEventListener('change', (e) => updateSelectedText({ font: e.target.value }));
+document.getElementById('metric-type').addEventListener('change', (e) => updateSelectedText({ metric: e.target.value }));
 document.getElementById('btn-delete-text').addEventListener('click', () => {
     customTexts = customTexts.filter(t => t.id !== selectedTextId);
     selectedTextId = customTexts[0]?.id || null;
     renderCustomTexts();
     syncTextControls();
+    saveSettings();
 });
+
+document.getElementById('btn-back-to-preview').addEventListener('click', closeVideoReadyModal);
+document.getElementById('btn-close-video-ready').addEventListener('click', closeVideoReadyModal);
 
 document.getElementById('btn-share').addEventListener('click', async () => {
     const l = document.getElementById('loader'); l.classList.remove('hidden');
@@ -1386,5 +1956,15 @@ document.getElementById('btn-share').addEventListener('click', async () => {
     l.classList.add('hidden');
 });
 
+populateMetricOptions();
+restoreSettings();
+document.getElementById('toggle-3d').classList.toggle('bg-blue-600', is3D);
+updateCameraModeUi();
+updateTerrainExaggerationLabel();
+renderCustomTexts();
+syncTextControls();
+updatePreviewOverlay();
+updateExportFrameGuide();
+updateExportControls();
 window.addEventListener('DOMContentLoaded', initMap);
 window.addEventListener('resize', updateExportFrameGuide);

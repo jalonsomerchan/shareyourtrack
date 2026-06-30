@@ -136,6 +136,31 @@ input[type="range"]::-webkit-slider-thumb {
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 
+.custom-text-overlay.metric {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.08em;
+    min-width: 3.8em;
+    padding: 0.38em 0.52em;
+    background: rgba(2, 6, 23, 0.72);
+    border-color: rgba(255, 255, 255, 0.16);
+    line-height: 0.95;
+}
+
+.custom-text-overlay.metric .metric-label {
+    font-size: 0.34em;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: rgba(226, 232, 240, 0.78);
+}
+
+.custom-text-overlay.metric .metric-value {
+    font-size: 1em;
+    font-weight: 900;
+    color: currentColor;
+}
+
 #text-toolbar.collapsed {
     transform: translateX(calc(-100% + 52px));
 }

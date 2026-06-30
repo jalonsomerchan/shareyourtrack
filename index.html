@@ -167,7 +167,7 @@
         </div>
 
         <!-- Bottom Stats -->
-        <div class="flex justify-between items-end drop-shadow-2xl">
+        <div class="hidden flex justify-between items-end drop-shadow-2xl">
             <div class="flex flex-col">
                 <span class="overlay-stat-label text-[10px] font-bold tracking-widest text-slate-400 uppercase">Distancia</span>
                 <span id="overlay-dist" class="text-3xl font-black italic">0.0 KM</span>
@@ -194,6 +194,10 @@
                 <button id="btn-add-text"
                     class="flex-1 bg-white text-slate-950 font-bold rounded-xl py-2 text-xs active:scale-95 transition">
                     <i class="fas fa-plus mr-1"></i> Texto
+                </button>
+                <button id="btn-add-metric"
+                    class="flex-1 bg-blue-600 text-white font-bold rounded-xl py-2 text-xs active:scale-95 transition">
+                    <i class="fas fa-gauge-high mr-1"></i> Dato
                 </button>
                 <button id="btn-hide-text-panel" class="w-9 h-9 rounded-xl hover:bg-white/10 text-slate-300">
                     <i class="fas fa-chevron-left"></i>
@@ -225,9 +229,15 @@
                         <option value="Courier New">Courier</option>
                     </select>
                 </label>
+                <label id="metric-controls" class="space-y-1 block hidden">
+                    <span class="text-[9px] uppercase font-bold text-slate-400">Dato GPX</span>
+                    <select id="metric-type"
+                        class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none">
+                    </select>
+                </label>
                 <button id="btn-delete-text"
                     class="w-full bg-red-500/20 text-red-200 border border-red-400/20 font-bold rounded-xl py-2 text-xs">
-                    Eliminar texto
+                    Eliminar elemento
                 </button>
             </div>
         </div>
@@ -329,21 +339,6 @@
                             <span class="text-[10px] font-bold uppercase text-slate-400">Título</span>
                         </label>
                         <label class="flex items-center gap-3 cursor-pointer">
-                            <input type="checkbox" id="check-stats" checked
-                                class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
-                            <span class="text-[10px] font-bold uppercase text-slate-400">Estadísticas</span>
-                        </label>
-                        <label class="flex items-center gap-3 cursor-pointer">
-                            <input type="checkbox" id="check-elevation"
-                                class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
-                            <span class="text-[10px] font-bold uppercase text-slate-400">Elevación</span>
-                        </label>
-                        <label class="flex items-center gap-3 cursor-pointer">
-                            <input type="checkbox" id="check-progress" checked
-                                class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
-                            <span class="text-[10px] font-bold uppercase text-slate-400">Progreso</span>
-                        </label>
-                        <label class="flex items-center gap-3 cursor-pointer">
                             <input type="checkbox" id="check-km-flags"
                                 class="w-4 h-4 rounded bg-white/10 border-white/20 text-blue-600 focus:ring-0">
                             <span class="text-[10px] font-bold uppercase text-slate-400">Banderas KM</span>
@@ -413,11 +408,11 @@
                 </button>
                 <button id="btn-start-record"
                 class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-600/20 active:scale-95 transition flex items-center justify-center gap-3">
-                <i class="fas fa-circle text-xs animate-pulse text-red-400"></i>
-                    EXPORTAR AHORA
+                <i class="fas fa-eye"></i>
+                    IR AL PREVIEW
                 </button>
             </div>
-            <p class="text-[9px] text-center text-slate-500 uppercase tracking-tighter">La exportación se genera desde el mapa y los textos de la preview.</p>
+            <p class="text-[9px] text-center text-slate-500 uppercase tracking-tighter">Primero revisa la preview; desde ahí podrás exportar el vídeo.</p>
         </div>
     </div>
 
@@ -431,7 +426,11 @@
     <!-- Modal: Vídeo Listo -->
     <div id="modal-video-ready"
         class="fixed inset-0 z-[4000] bg-slate-950/90 backdrop-blur-xl hidden flex items-center justify-center p-4">
-        <div class="glass w-full max-w-sm rounded-[2.5rem] p-6 space-y-5 text-center shadow-2xl border-white/10">
+        <div class="glass w-full max-w-sm rounded-[2.5rem] p-6 space-y-5 text-center shadow-2xl border-white/10 relative">
+            <button id="btn-close-video-ready"
+                class="absolute right-5 top-5 text-slate-400 hover:text-white w-9 h-9 rounded-xl hover:bg-white/10">
+                <i class="fas fa-times"></i>
+            </button>
             <div class="text-5xl">🎬</div>
             <div>
                 <h2 class="text-xl font-bold">¡Vídeo listo!</h2>
@@ -439,6 +438,10 @@
             </div>
             <video id="download-preview" class="w-full rounded-2xl bg-black border border-white/10" controls playsinline></video>
             <div class="space-y-3">
+                <button id="btn-back-to-preview"
+                    class="w-full bg-white text-slate-950 font-bold py-4 rounded-2xl active:scale-95 transition flex items-center justify-center gap-2">
+                    <i class="fas fa-arrow-left"></i> Volver a editar
+                </button>
                 <button id="btn-download-video"
                     class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition flex items-center justify-center gap-2">
                     <i class="fas fa-download"></i> Descargar
@@ -487,7 +490,7 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=20260629-storage-metrics"></script>
 </body>
 
 </html>
